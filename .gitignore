@@ -50,3 +50,6 @@ rsconnect/
 
 # RStudio files
 .DS_Store
+
+# RData
+.RDataTmp1
