@@ -83,84 +83,208 @@ phenol %<>%
 
 require(patchwork)
 phenol %$% wrap_plots(Standard_Plot)
-# Pretty linear. In reality there is a lower bound at 0 and an upper bound
-# around the maximal absorbance (~2.5 a.u.). But since I know the limit of 
-# linearity to be around 1 mg mL^-1, I can approximate with a linear model.
+# The limit of linearity for this assay is assumed to be 1 mg mL^-1, 
+# but this suggests that saturation already happens earlier.
 
-# 2.2 Model choice ####
-# The typical linear model takes the form y ~ normal( alpha + beta * x , sigma ).
-# alpha (absorbance) and beta (relationship between concentration and absorbance)
-# are necessarily positive. Initially I went with an exponential distribution
-# for alpha, because it is expected to be very near zero but no other information 
-# is available, and a gamma distributions for beta, which is expected to be near 
-# the absorbance maximum (2.5 a.u.) divided by the maximal concentration (1 mg mL^1), 
-# so 2.5, as well as a normal likelihood truncated at 0. 
+# 2.2 Prior simulation ####
+# There are three saturating models that can be tested alongside the linear:
+# rectangular hyperbola, exponential saturation, and hyperbolic tangent.
+# A0 (absorbance intercept), Amax (absorbance maximum) and beta (linear 
+# relationship between concentration and absorbance) are necessarily positive. 
+# A0 is expected to be very near zero but no other information is available, 
+# so an exponential distribution is best. Amax is expected above 2.5 a.u. and
+# beta is expected to be near 2.5 a.u. divided by 1 mg mL^1, so 2.5.
+# Both need a gamma distribution. A truncated normal likelihood
+# ensures positive predictions but doesn't mess with the nonlinear model like 
+# a different positive-values-only likelihood such as gamma would.
 
-# But now I realise these constraints at this early stage are useless because after 
-# converting fixed absorbance measurements, negative concentration estimates are still 
-# possible (e.g. when sample absorbance falls within the posterior of alpha). Working 
-# with fewer constrains also frees up other uncertainty propagation possibilities such 
-# as incorporating uncertainty in sigma. Positivity can still be enforced at a later 
-# stage when I will run the model to estimate the mean of the technical triplicate. 
-# So I will now go with a normal distribution centred on zero for alpha and a normal 
-# distribution centred on 2.5 for beta as well as an unconstrained normal likelihood.
-
-# 2.3 Prior simulation ####
-tibble(n = 1:1e3,  
-       alpha = rnorm( 1e3 , 0 , 0.2 ),
-       beta = rnorm( 1e3 , 2.5 , 0.5 )) %>%
-  expand_grid(c = seq(0, 1)) %>%
-  mutate(A = alpha + beta * c) %>%
-  ggplot(aes(c, A, group = n)) +
+require(truncnorm) # R doesn't have a built-in truncated normal distribution.
+tibble(n = 1:1e3,
+       A0 = rexp( 1e3 , 10 ),
+       Amax = rgamma( 1e3 , 3^2 / 2^2 , 3 / 2^2 ),
+       beta = rgamma( 1e3 , 2.5^2 / 1.5^2 , 2.5 / 1.5^2 ),
+       sigma = rexp( 1e3, 3 )) %>%
+  expand_grid(c = seq(0, 1, 0.05)) %>%
+  mutate(mu_lm = A0 + beta * c,
+         mu_rh = A0 + Amax * beta * c / ( Amax + beta * c ),
+         mu_es = A0 + Amax * ( 1 - exp( -beta * c / Amax ) ),
+         mu_ht = A0 + Amax * tanh( beta * c / Amax ),
+         A_lm = rtruncnorm( n = n() , mean = mu_lm , sd = sigma , a = 0 ),
+         A_rh = rtruncnorm( n = n() , mean = mu_rh , sd = sigma , a = 0 ),
+         A_es = rtruncnorm( n = n() , mean = mu_es , sd = sigma , a = 0 ),
+         A_ht = rtruncnorm( n = n() , mean = mu_ht , sd = sigma , a = 0 )) %>%
+  pivot_longer(cols = c(starts_with("mu"), starts_with("A_")),
+               names_to = "par_mod",
+               values_to = "value") %>%
+  separate(par_mod, into = c("par", "mod")) %>%
+  mutate(mod = mod %>% fct_relevel("lm", "rh", "es"),
+         par = par %>% fct_relevel("mu")) %>%
+  ggplot(aes(c, value, group = n)) +
     geom_hline(yintercept = c(0, 2.5)) +
-    geom_line(alpha = 0.05) +
-    coord_cartesian(expand = F, clip = "off") +
-    theme_minimal()
+    geom_line(alpha = 0.01) +
+    facet_grid(par ~ mod) +
+    coord_cartesian(expand = F,
+                    ylim = c(-1, 5)) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
 # Covers all reasonable possibilities.
 
-# 2.4 Run model ####
-standard_stan <- "
+# 2.3 Stan models ####
+# 2.3.1 Linear model ####
+standard_lm_stan <- "
     data{ 
       int n;
-      vector[n] Absorbance;
-      vector[n] Concentration;
+      vector<lower=0>[n] Absorbance;
+      vector<lower=0>[n] Concentration;
       }
 
     parameters{
-      real alpha;
-      real beta;
+      real<lower=0> A0;
+      real<lower=0> beta;
       real<lower=0> sigma;
       }
 
     model{
       // Priors
-      alpha ~ normal( 0 , 0.2 );
-      beta ~ normal( 2.5 , 0.5 );
-      sigma ~ exponential( 1 );
+      A0 ~ exponential( 10 );
+      beta ~ gamma( square(2.5) / square(1.5) , 2.5 / square(1.5) );
+      sigma ~ exponential( 3 );
 
       // Model
       vector[n] mu;
       for ( i in 1:n ) {
-        mu[i] = alpha + beta * Concentration[i];
+        mu[i] = A0 + beta * Concentration[i];
       }
 
-      // Likelihood
-      Absorbance ~ normal( mu , sigma );
+      // Truncated normal likelihood
+      Absorbance ~ normal( mu , sigma ) T[0,];
       }
 "
 
-
 require(cmdstanr)
-standard_model <- standard_stan %>%
+standard_lm_model <- standard_lm_stan %>%
   write_stan_file() %>%
   cmdstan_model()
-  
+
+# 2.3.2 Rectangular hyperbola ####
+standard_rh_stan <- "
+    data{ 
+      int n;
+      vector<lower=0>[n] Absorbance;
+      vector<lower=0>[n] Concentration;
+      }
+
+    parameters{
+      real<lower=0> A0;
+      real<lower=0> Amax;
+      real<lower=0> beta;
+      real<lower=0> sigma;
+      }
+
+    model{
+      // Priors
+      A0 ~ exponential( 10 );
+      Amax ~ gamma( square(3) / square(2) , 3 / square(2) );
+      beta ~ gamma( square(2.5) / square(1.5) , 2.5 / square(1.5) );
+      sigma ~ exponential( 3 );
+
+      // Model
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = A0 + Amax * beta * Concentration[i] / 
+                ( Amax + beta * Concentration[i] );
+      }
+
+      // Truncated normal likelihood
+      Absorbance ~ normal( mu , sigma ) T[0,];
+      }
+"
+
+standard_rh_model <- standard_rh_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+# 2.3.3 Exponential saturation ####
+standard_es_stan <- "
+    data{ 
+      int n;
+      vector<lower=0>[n] Absorbance;
+      vector<lower=0>[n] Concentration;
+      }
+
+    parameters{
+      real<lower=0> A0;
+      real<lower=0> Amax;
+      real<lower=0> beta;
+      real<lower=0> sigma;
+      }
+
+    model{
+      // Priors
+      A0 ~ exponential( 10 );
+      Amax ~ gamma( square(3) / square(2) , 3 / square(2) );
+      beta ~ gamma( square(2.5) / square(1.5) , 2.5 / square(1.5) );
+      sigma ~ exponential( 3 );
+
+      // Model
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = A0 + Amax * ( 1 - exp( -beta * Concentration[i] / Amax ) );
+      }
+
+      // Truncated normal likelihood
+      Absorbance ~ normal( mu , sigma ) T[0,];
+      }
+"
+
+standard_es_model <- standard_es_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+# 2.3.4 Hyperbolic tangent ####
+standard_ht_stan <- "
+    data{ 
+      int n;
+      vector<lower=0>[n] Absorbance;
+      vector<lower=0>[n] Concentration;
+      }
+
+    parameters{
+      real<lower=0> A0;
+      real<lower=0> Amax;
+      real<lower=0> beta;
+      real<lower=0> sigma;
+      }
+
+    model{
+      // Priors
+      A0 ~ exponential( 10 );
+      Amax ~ gamma( square(3) / square(2) , 3 / square(2) );
+      beta ~ gamma( square(2.5) / square(1.5) , 2.5 / square(1.5) );
+      sigma ~ exponential( 3 );
+
+      // Model
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = A0 + Amax * tanh( beta * Concentration[i] / Amax );
+      }
+
+      // Truncated normal likelihood
+      Absorbance ~ normal( mu , sigma ) T[0,];
+      }
+"
+
+standard_ht_model <- standard_ht_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+# 2.3.5 Run all models ####
 require(tidybayes)
 phenol %<>%
   mutate(
-    Standard_Samples = Standard_Data %>%
+    Standard_lm_Samples = Standard_Data %>%
       map(
-        ~ standard_model$sample(
+        ~ standard_lm_model$sample(
           data = .x %>%
             select(Absorbance, Concentration) %>%
             compose_data(),
@@ -169,95 +293,267 @@ phenol %<>%
           iter_warmup = 1e4,
           iter_sampling = 1e4
         )
+        ),
+    Standard_rh_Samples = Standard_Data %>%
+      map(
+        ~ standard_rh_model$sample(
+          data = .x %>%
+            select(Absorbance, Concentration) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
         )
+      ),
+    Standard_es_Samples = Standard_Data %>%
+      map(
+        ~ standard_es_model$sample(
+          data = .x %>%
+            select(Absorbance, Concentration) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        )
+      ),
+    Standard_ht_Samples = Standard_Data %>%
+      map(
+        ~ standard_ht_model$sample(
+          data = .x %>%
+            select(Absorbance, Concentration) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        )
+      )
   )
 
-# 2.5 Model checks ####
-# 2.5.1 Rhat ####
+phenol
+
+# 2.4 Model checks ####
+# 2.4.1 Rhat ####
 phenol %<>%
   mutate(
-    summary = Standard_Samples %>%
+    summary_lm = Standard_lm_Samples %>%
       map(
         ~ .x$summary() %>%
           mutate(rhat_check = rhat > 1.001) %>%
-          summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
-                    rhat_mean = mean(rhat),
-                    rhat_sd = sd(rhat))
+          summarise(rhat_1.001_lm = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean_lm = mean(rhat),
+                    rhat_sd_lm = sd(rhat))
+        ),
+    summary_rh = Standard_rh_Samples %>%
+      map(
+        ~ .x$summary() %>%
+          mutate(rhat_check = rhat > 1.001) %>%
+          summarise(rhat_1.001_rh = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean_rh = mean(rhat),
+                    rhat_sd_rh = sd(rhat))
+      ),
+    summary_es = Standard_es_Samples %>%
+      map(
+        ~ .x$summary() %>%
+          mutate(rhat_check = rhat > 1.001) %>%
+          summarise(rhat_1.001_es = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean_es = mean(rhat),
+                    rhat_sd_es = sd(rhat))
+      ),
+    summary_ht = Standard_ht_Samples %>%
+      map(
+        ~ .x$summary() %>%
+          mutate(rhat_check = rhat > 1.001) %>%
+          summarise(rhat_1.001_ht = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean_ht = mean(rhat),
+                    rhat_sd_ht = sd(rhat))
       )
   ) %>%
-  unnest(summary)
+  unnest(cols = c(summary_lm, summary_rh, summary_es, summary_ht))
 
-phenol
+phenol %>% select(Name, ends_with("lm"))
+phenol %>% select(Name, ends_with("rh"))
+phenol %>% select(Name, ends_with("_es"))
+phenol %>% select(Name, ends_with("ht"))
 # No rhat above 1.001.
 
-# 2.5.2 Chains ####
+# 2.4.2 Chains ####
 require(bayesplot)
 phenol %<>%
   rowwise() %>%
   mutate(
-    Standard_Chains = 
+    Standard_lm_Chains = 
       list(
-          Standard_Samples$draws(format = "df") %>%
+        Standard_lm_Samples$draws(format = "df") %>%
+          mcmc_rank_overlay() +
+          ggtitle(Name) # and adding titles
+      ),
+    Standard_rh_Chains =
+      list(
+        Standard_rh_Samples$draws(format = "df") %>%
+          mcmc_rank_overlay() +
+          ggtitle(Name) # and adding titles
+      ),
+    Standard_es_Chains =
+      list(
+        Standard_es_Samples$draws(format = "df") %>%
+          mcmc_rank_overlay() +
+          ggtitle(Name) # and adding titles
+      ),
+    Standard_ht_Chains =
+      list(
+        Standard_ht_Samples$draws(format = "df") %>%
           mcmc_rank_overlay() +
           ggtitle(Name) # and adding titles
       )
     ) %>%
   ungroup()
 
-phenol %$% wrap_plots(Standard_Chains)
+phenol %$% wrap_plots(Standard_lm_Chains)
+phenol %$% wrap_plots(Standard_rh_Chains)
+phenol %$% wrap_plots(Standard_es_Chains)
+phenol %$% wrap_plots(Standard_ht_Chains)
 # Chains look good.
 
-# 2.5.3 Pairs ####
+# 2.4.3 Pairs ####
 phenol %<>%
   mutate(
-    Standard_Pairs = Standard_Samples %>%
+    Standard_lm_Pairs = Standard_lm_Samples %>%
       map(
         ~ .x$draws(format = "df") %>% # mcmc_pairs does not allow adding titles
-          mcmc_pairs(pars = c("alpha", "beta"))
+          mcmc_pairs(pars = c("A0", "beta"))
+      ),
+    Standard_rh_Pairs = Standard_rh_Samples %>%
+      map(
+        ~ .x$draws(format = "df") %>% # mcmc_pairs does not allow adding titles
+          mcmc_pairs(pars = c("A0", "Amax", "beta"))
+      ),
+    Standard_es_Pairs = Standard_es_Samples %>%
+      map(
+        ~ .x$draws(format = "df") %>% # mcmc_pairs does not allow adding titles
+          mcmc_pairs(pars = c("A0", "Amax", "beta"))
+      ),
+    Standard_ht_Pairs = Standard_ht_Samples %>%
+      map(
+        ~ .x$draws(format = "df") %>% # mcmc_pairs does not allow adding titles
+          mcmc_pairs(pars = c("A0", "Amax", "beta"))
       )
   )
 
-phenol %$% wrap_plots(Standard_Pairs)
-# Some correlation between alpha and beta, but not concerning.
+phenol %$% wrap_plots(Standard_lm_Pairs)
+phenol %$% wrap_plots(Standard_rh_Pairs)
+phenol %$% wrap_plots(Standard_es_Pairs)
+phenol %$% wrap_plots(Standard_ht_Pairs)
+# Some correlation between A0 and beta in the linear model
+# and Amax and beta in the other models, but not concerning.
 
-# 2.6 Prior-posterior comparison ####
+# 2.5 Prior-posterior comparison ####
 source("functions.R")
-# 2.6.1 Sample prior ####
+# 2.5.1 Sample prior ####
 phenol %<>%
   mutate(
-    Standard_Prior = Standard_Data %>%
+    Standard_lm_Prior = Standard_Data %>%
       map(
-        ~ prior_samples(model = standard_model,
+        ~ prior_samples(model = standard_lm_model,
+                        data = .x %>%
+                          select(Absorbance, Concentration) %>%
+                          compose_data())
+      ),
+    Standard_rh_Prior = Standard_Data %>%
+      map(
+        ~ prior_samples(model = standard_rh_model,
+                        data = .x %>%
+                          select(Absorbance, Concentration) %>%
+                          compose_data())
+      ),
+    Standard_es_Prior = Standard_Data %>%
+      map(
+        ~ prior_samples(model = standard_es_model,
+                        data = .x %>%
+                          select(Absorbance, Concentration) %>%
+                          compose_data())
+      ),
+    Standard_ht_Prior = Standard_Data %>%
+      map(
+        ~ prior_samples(model = standard_ht_model,
                         data = .x %>%
                           select(Absorbance, Concentration) %>%
                           compose_data())
       )
   )
 
-# 2.6.2 Combine prior and posterior ####
+# 2.5.2 Combine prior and posterior ####
 phenol %<>%
   mutate(
-    Standard_Prior_Posterior = Standard_Prior %>%
-      map2(Standard_Samples,
+    Standard_lm_Prior_Posterior = Standard_lm_Prior %>%
+      map2(Standard_lm_Samples,
         ~ prior_posterior_draws(prior_samples = .x,
                                 posterior_samples = .y,
-                                parameters = c("alpha", "beta", "sigma"),
+                                parameters = c("A0", "beta", "sigma"),
                                 format = "short")
+      ),
+    Standard_rh_Prior_Posterior = Standard_rh_Prior %>%
+      map2(Standard_rh_Samples,
+           ~ prior_posterior_draws(prior_samples = .x,
+                                   posterior_samples = .y,
+                                   parameters = c("A0", "Amax", "beta", "sigma"),
+                                   format = "short")
+      ),
+    Standard_es_Prior_Posterior = Standard_es_Prior %>%
+      map2(Standard_es_Samples,
+           ~ prior_posterior_draws(prior_samples = .x,
+                                   posterior_samples = .y,
+                                   parameters = c("A0", "Amax", "beta", "sigma"),
+                                   format = "short")
+      ),
+    Standard_ht_Prior_Posterior = Standard_ht_Prior %>%
+      map2(Standard_ht_Samples,
+           ~ prior_posterior_draws(prior_samples = .x,
+                                   posterior_samples = .y,
+                                   parameters = c("A0", "Amax", "beta", "sigma"),
+                                   format = "short")
       )
   )
 
-phenol$Standard_Prior_Posterior[[3]]
-
-# 2.6.3 Plot comparison ####
+# 2.5.3 Plot comparison ####
 phenol %<>%
   rowwise() %>%
   mutate(
-    Standard_Prior_Posterior_Plot =
+    Standard_lm_Prior_Posterior_Plot =
       list(
-          prior_posterior_draws(prior_samples = Standard_Prior,
-                                posterior_samples = Standard_Samples,
-                                parameters = c("alpha", "beta", "sigma"),
+          prior_posterior_draws(prior_samples = Standard_lm_Prior,
+                                posterior_samples = Standard_lm_Samples,
+                                parameters = c("A0", "beta", "sigma"),
                                 format = "long") %>%
+          prior_posterior_plot() +
+          ggtitle(Name)
+      ),
+    Standard_rh_Prior_Posterior_Plot =
+      list(
+        prior_posterior_draws(prior_samples = Standard_rh_Prior,
+                              posterior_samples = Standard_rh_Samples,
+                              parameters = c("A0", "Amax", "beta", "sigma"),
+                              format = "long") %>%
+          prior_posterior_plot() +
+          ggtitle(Name)
+      ),
+    Standard_es_Prior_Posterior_Plot =
+      list(
+        prior_posterior_draws(prior_samples = Standard_es_Prior,
+                              posterior_samples = Standard_es_Samples,
+                              parameters = c("A0", "Amax", "beta", "sigma"),
+                              format = "long") %>%
+          prior_posterior_plot() +
+          ggtitle(Name)
+      ),
+    Standard_ht_Prior_Posterior_Plot =
+      list(
+        prior_posterior_draws(prior_samples = Standard_ht_Prior,
+                              posterior_samples = Standard_ht_Samples,
+                              parameters = c("A0", "Amax", "beta", "sigma"),
+                              format = "long") %>%
           prior_posterior_plot() +
           ggtitle(Name)
       )
@@ -265,22 +561,77 @@ phenol %<>%
   ungroup()
 
 phenol %$% 
-  wrap_plots(Standard_Prior_Posterior_Plot) +
+  wrap_plots(Standard_lm_Prior_Posterior_Plot) +
   plot_layout(guides = "collect") &
   theme(legend.position = "bottom")
-  
-# 2.7 Prediction ####
-# 2.7.1 Calculate prediction ####
+
+phenol %$% 
+  wrap_plots(Standard_rh_Prior_Posterior_Plot) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+phenol %$% 
+  wrap_plots(Standard_es_Prior_Posterior_Plot) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+phenol %$% 
+  wrap_plots(Standard_ht_Prior_Posterior_Plot) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+# 2.6 Prediction ####
+# 2.6.1 Calculate prediction ####
 phenol %<>%
   mutate(
-    Standard_Prediction = Standard_Prior_Posterior %>%
+    Standard_lm_Prediction = Standard_lm_Prior_Posterior %>%
       map2(
         Standard_Data,
         ~ spread_continuous(prior_posterior_draws_short = .x,
                             data = .y,
                             predictor_name = "Concentration") %>%
-          mutate(mu = alpha + beta * Concentration,
-                 obs = rnorm( n() , mu , sigma )) %>%
+          mutate(mu = A0 + beta * Concentration,
+                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+          group_by(distribution, Concentration) %>%
+          reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
+                  obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
+          unnest(c(mu, obs), names_sep = "_")
+      ),
+    Standard_rh_Prediction = Standard_rh_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x,
+                            data = .y,
+                            predictor_name = "Concentration") %>%
+          mutate(mu = A0 + Amax * beta * Concentration / 
+                      ( Amax + beta * Concentration ),
+                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+          group_by(distribution, Concentration) %>%
+          reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
+                  obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
+          unnest(c(mu, obs), names_sep = "_")
+      ),
+    Standard_es_Prediction = Standard_es_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x,
+                            data = .y,
+                            predictor_name = "Concentration") %>%
+          mutate(mu = A0 + Amax * ( 1 - exp( -beta * Concentration / Amax ) ),
+                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+          group_by(distribution, Concentration) %>%
+          reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
+                  obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
+          unnest(c(mu, obs), names_sep = "_")
+      ),
+    Standard_ht_Prediction = Standard_ht_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x,
+                            data = .y,
+                            predictor_name = "Concentration") %>%
+          mutate(mu = A0 + Amax * tanh( beta * Concentration / Amax ),
+                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
           group_by(distribution, Concentration) %>%
           reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
                   obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
@@ -288,23 +639,86 @@ phenol %<>%
       )
   )
 
-# 2.7.2 Plot prediction ####
+# 2.6.2 Plot prediction ####
 phenol %<>%
   rowwise() %>% 
   mutate(
-    Standard_Prediction_Plot =
+    Standard_lm_Prediction_Plot =
       list(
-        Standard_Prediction %>%
+        Standard_lm_Prediction %>%
           ggplot() +
             geom_point(data = Standard_Data, aes(Concentration, Absorbance)) +
             geom_line(data = . %>% filter(distribution == "posterior"),
                       aes(Concentration, mu_y)) +
-            # geom_ribbon(data = . %>% filter(distribution == "posterior"),
-            #             aes(Concentration, ymin = mu_ymin, ymax = mu_ymax,
-            #                 alpha = factor(mu_.width))) + # unhash to see mu predictions
             geom_ribbon(data = . %>% filter(distribution == "posterior"),
-                        aes(Concentration, ymin = obs_ymin, ymax = obs_ymax,
-                            alpha = factor(obs_.width))) + 
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax,
+                            alpha = factor(mu_.width))) +
+            # geom_ribbon(data = . %>% filter(distribution == "posterior"),
+            #             aes(Concentration, ymin = obs_ymin, ymax = obs_ymax,
+            #                 alpha = factor(obs_.width))) + # unhash to see observations
+            geom_ribbon(data = . %>% filter(distribution == "prior", mu_.width == 0.9),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax),
+                        colour = alpha("black", 0.3), fill = NA) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      ),
+    Standard_rh_Prediction_Plot =
+      list(
+        Standard_rh_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Concentration, Absorbance)) +
+            geom_line(data = . %>% filter(distribution == "posterior"),
+                      aes(Concentration, mu_y)) +
+            geom_ribbon(data = . %>% filter(distribution == "posterior"),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax,
+                            alpha = factor(mu_.width))) +
+            # geom_ribbon(data = . %>% filter(distribution == "posterior"),
+            #             aes(Concentration, ymin = obs_ymin, ymax = obs_ymax,
+            #                 alpha = factor(obs_.width))) + # unhash to see observations
+            geom_ribbon(data = . %>% filter(distribution == "prior", mu_.width == 0.9),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax),
+                        colour = alpha("black", 0.3), fill = NA) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      ),
+    Standard_es_Prediction_Plot =
+      list(
+        Standard_es_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Concentration, Absorbance)) +
+            geom_line(data = . %>% filter(distribution == "posterior"),
+                      aes(Concentration, mu_y)) +
+            geom_ribbon(data = . %>% filter(distribution == "posterior"),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax,
+                            alpha = factor(mu_.width))) +
+            # geom_ribbon(data = . %>% filter(distribution == "posterior"),
+            #             aes(Concentration, ymin = obs_ymin, ymax = obs_ymax,
+            #                 alpha = factor(obs_.width))) + # unhash to see observations
+            geom_ribbon(data = . %>% filter(distribution == "prior", mu_.width == 0.9),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax),
+                        colour = alpha("black", 0.3), fill = NA) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      ),
+    Standard_ht_Prediction_Plot =
+      list(
+        Standard_ht_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Concentration, Absorbance)) +
+            geom_line(data = . %>% filter(distribution == "posterior"),
+                      aes(Concentration, mu_y)) +
+            geom_ribbon(data = . %>% filter(distribution == "posterior"),
+                        aes(Concentration, ymin = mu_ymin, ymax = mu_ymax,
+                            alpha = factor(mu_.width))) +
+            # geom_ribbon(data = . %>% filter(distribution == "posterior"),
+            #             aes(Concentration, ymin = obs_ymin, ymax = obs_ymax,
+            #                 alpha = factor(obs_.width))) + # unhash to see observations
             geom_ribbon(data = . %>% filter(distribution == "prior", mu_.width == 0.9),
                         aes(Concentration, ymin = mu_ymin, ymax = mu_ymax),
                         colour = alpha("black", 0.3), fill = NA) +
@@ -316,12 +730,42 @@ phenol %<>%
   ) %>%
   ungroup()
 
-phenol %$% wrap_plots(Standard_Prediction_Plot)
-# The linear models generally fit well but overestimate absorbance
-# somewhat at concentrations near 1 mg mL^1. When observational
-# uncertainty is incorporated this is good enough!
+phenol %$% wrap_plots(Standard_lm_Prediction_Plot)
+phenol %$% wrap_plots(Standard_rh_Prediction_Plot)
+phenol %$% wrap_plots(Standard_es_Prediction_Plot)
+phenol %$% wrap_plots(Standard_ht_Prediction_Plot)
+# The linear models generally overestimate absorbance somewhat for 
+# concentrations near 1 mg mL^1. The saturating models all seem to 
+# fit better but it is unclear which fits best.
 
-# 2.7.3 Inverse prediction ####
+# Plot only the mean of mu for all models.
+phenol %<>%
+  rowwise() %>% 
+  mutate(
+    Standard_Prediction = 
+      list(
+        bind_rows(Standard_lm_Prediction,
+                  Standard_rh_Prediction,
+                  Standard_es_Prediction,
+                  Standard_ht_Prediction) %>%
+          mutate(model = rep(c("lm", "rh", "es", "ht"), each = n() / 4))
+        ),
+    Standard_Prediction_Plot =
+      list(
+        Standard_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Concentration, Absorbance)) +
+            geom_line(data = . %>% filter(distribution == "posterior"),
+                      aes(Concentration, mu_y, colour = model)) +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  )
+
+phenol %$% wrap_plots(Standard_Prediction_Plot)
+
+# 2.6.3 Inverse prediction ####
 # To predict concentrations from absorbance I need inverse prediction,
 # i.e. solving for x. Given y = alpha + beta * x this becomes 
 # x = ( y - alpha ) / beta, i.e. Concentration = ( Absorbance - alpha ) / beta.
@@ -379,7 +823,7 @@ rnorm( 1e5 , ( Absorbance - alpha ) / beta , sigma / beta ) %>% hist()
 # and we'd best go with one of the former expressions. I'll go with the
 # least derived: ( Absorbance - alpha - rnorm( 1e5 , 0 , sigma ) ) / beta
 
-# 2.7.4 Calculating sample concentration ####
+# 2.6.4 Calculating sample concentration ####
 # I need a new list of tibbles where the prior estimates and sample
 # data are joined.
 phenol$Standard_Prior_Posterior[[1]]
@@ -407,7 +851,7 @@ phenol$Samples_Data_Converted[[3]]
 # estimated distribution Concentration because this will be constrained to
 # positive values only in the next model. 
 
-# 3. Technical triplicate model ####
+# 3. Technical triplicate models ####
 # 3.1 Prepare data ####
 # I no longer want the plate-nested structure of phenol because
 # the plate-specific data (standard curve) can now be disregarded.
