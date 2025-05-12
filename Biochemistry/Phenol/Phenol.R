@@ -64,6 +64,273 @@ phenol
 phenol$Standard_Data[[3]]
 phenol$Samples_Data[[2]]
 
+# 2. Technical triplicate models ####
+# 2.1 Prepare data ####
+# I no longer want the plate-nested structure of phenol because my
+# first set of models looks at each sample on an individual basis.
+# Therefore I need nesting by ID, each of which contains the
+# technical triplicate for one sample.
+
+# Re-nest phenol.
+phenol %<>%
+  unnest(cols = Samples_Data) %>%
+  group_by(Name, Date, Plate, Standard_Data, ID, Mass) %>%
+  nest(.key = "Technical_Data")
+
+phenol
+phenol$Technical_Data[[30]]
+
+# Calculate mean of each triplicate.
+phenol %<>%
+  mutate(
+    Absorbance_mean = Technical_Data %>%
+      map(
+        ~ .x %$% mean(Absorbance)
+      )
+  )
+
+# 3.2 Visualise data ####
+phenol %<>%
+  rowwise() %>%
+  mutate(
+    Technical_Plot = 
+      list(
+        Technical_Data %>%
+          ggplot(aes(Well, Absorbance)) +
+            geom_point() +
+            geom_hline(yintercept = Absorbance_mean) +
+            ggtitle(ID) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+        )
+    ) %>%
+  ungroup()
+
+require(patchwork)
+phenol %$% 
+  wrap_plots(Technical_Plot) %>%
+  ggsave(filename = "Technical_Data.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 60, width = 60, units = "cm")
+# This technical variation needs to be modelled.
+
+# 2.3 Prior simulation ####
+# One thing I know to be consistent across samples is that they need
+# to be positive and they are likely between 0 and 2.6, which is roughly
+# the maximal absorbance for this chromophore. The intercept alpha
+# can then be normally distributed around the log mean and the log link
+# function together with the gamma likelihood ensure positivity. Due
+# to the low number of technical replicates there are divergences
+# if I set the prior on the grand mean.
+phenol$Technical_Data %>% 
+  bind_rows() %$% 
+  mean(Absorbance) %>% 
+  signif(1)
+
+tibble(alpha = rnorm( 1e5 , log(0.8) , 1 ),
+       mu = alpha %>% exp(),
+       sigma = rexp( 1e5 , 5 ),
+       A = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
+  ggplot(aes(y = A)) +
+    geom_hline(yintercept = c(0, 2.6)) + # absorbances are between 0 and 2.6
+    geom_density(orientation = "y", colour = NA, fill = "black", alpha = 0.5) +
+    scale_y_continuous(limits = c(0, 5),
+                       oob = scales::oob_keep) +
+    coord_cartesian(expand = F, clip = "off",
+                    ylim = c(0, 5)) +
+    theme_minimal()
+
+# Therefore, I'll include the calculated mean in the Stan model,
+# and centre the prior on the log of that.
+
+# 2.4 Run model ####
+technical_stan <- "
+    data{
+      int n;
+      vector<lower=0>[n] Absorbance;
+      real<lower=0> Absorbance_mean;
+      }
+
+    parameters{
+      real alpha; // Intercept in the log space
+      real<lower=0> sigma; // Likelihood uncertainty
+      }
+
+    model{
+      // Priors
+      alpha ~ normal( log(Absorbance_mean) , 0.2 );
+      sigma ~ exponential( 5 );
+
+      // Model
+      real mu;
+      mu = exp( alpha ); // Log link function
+
+      // Gamma likelihood
+      Absorbance ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
+      }
+"
+
+require(cmdstanr)
+technical_model <- technical_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+require(tidybayes)
+phenol %<>%
+  mutate(
+    Technical_Samples = Technical_Data %>%
+      map2(
+        Absorbance_mean, # list containing calculated means
+        ~ technical_model$sample(
+          data = .x %>%
+            select(Absorbance) %>%
+            compose_data() %>%
+            list_modify(Absorbance_mean = .y), # here the mean is added
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        )
+        )
+  )
+# Some divergent transitions, likely due to n = 3.
+
+# 2.5 Model checks ####
+# 2.5.1 Rhat ####
+phenol %<>%
+  mutate(
+    summary = Technical_Samples %>%
+      map(
+        ~ .x$summary() %>%
+          mutate(rhat_check = rhat > 1.001) %>%
+          summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean = mean(rhat),
+                    rhat_sd = sd(rhat))
+        )
+  ) %>%
+  unnest(cols = summary)
+
+phenol %>% 
+  select(Name, ID, rhat_1.001, rhat_mean, rhat_sd) %>%
+  print(n = 91)
+# Almost no rhat above 1.001, and even the few problematic cases have a mean
+# rhat of 1.00 with small sd.
+
+# 2.5.2 Chains ####
+require(bayesplot)
+phenol %<>%
+  rowwise() %>%
+  mutate(
+    Technical_Chains = 
+      list(
+        Technical_Samples$draws(format = "df") %>%
+          mcmc_rank_overlay() +
+          ggtitle(Name)
+        )
+      ) %>%
+  ungroup()
+
+( phenol %$% 
+  wrap_plots(Technical_Chains) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom") ) %>%
+  ggsave(filename = "Technical_Chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 80, width = 80, units = "cm")
+# Chains look fine.
+
+# 2.6 Prior-posterior comparison ####
+# 2.6.1 Sample priors ####
+phenol %<>%
+  mutate(
+    Technical_Prior = Absorbance_mean %>%
+      map(
+        ~ tibble(.chain = 1:8 %>% rep(each = 1e4),
+                 .iteration = 1:1e4 %>% rep(times = 8),
+                 .draw = 1:8e4,
+                 alpha = rnorm( 8e4 , log(.x) , 0.2 ), # variable log mean
+                 sigma = rexp( 8e4 , 5 ))
+      )
+  )
+
+# 2.6.2 Extract posteriors ####
+phenol %<>%
+  mutate(
+    Technical_Posterior = Technical_Samples %>%
+      map(
+        ~ .x %>% spread_draws(alpha, sigma)
+      )
+  )
+
+# 2.6.3 Plot comparison ####
+source("functions.R")
+phenol %<>%
+  rowwise() %>%
+  mutate(
+    Technical_Prior_Posterior =
+      list(
+          Technical_Prior %>%
+            bind_rows(Technical_Posterior) %>%
+            mutate(distribution = c("prior", "posterior") %>%
+                     rep(each = 8e4) %>% fct()) %>%
+            pivot_longer(cols = c(alpha, sigma),
+                         names_to = ".variable",
+                         values_to = ".value") %>%
+            prior_posterior_plot() +
+            ggtitle(Name)
+      )
+  ) %>%
+  ungroup()
+
+( phenol %$% 
+  wrap_plots(Technical_Prior_Posterior) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom") ) %>%
+  ggsave(filename = "Technical_Prior_Posterior.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 80, width = 80, units = "cm")
+
+
+# 2.7 Prediction ####
+# 2.7.1 Calculate prediction ####
+phenol %<>%
+  mutate(
+    Technical_Prediction = Technical_Posterior %>%
+      map(
+        ~ .x %>%
+          mutate(mu = exp( alpha ),
+                 obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ))
+      )
+  )
+
+# 2.7.2 Plot prediction ####
+require(ggdist)
+phenol %<>%
+  rowwise() %>%
+  mutate(
+    Technical_Prediction_Plot = 
+      list(
+          ggplot() +
+            geom_point(data = Technical_Data,
+                       aes(Well, Absorbance)) +
+            geom_hline(yintercept = Absorbance_mean) +
+            stat_eye(data = Technical_Prediction,
+                     aes(2, obs), alpha = 0.5,
+                     point_interval = NULL) +
+            scale_y_continuous(limits = Technical_Data %$% 
+                                 c(min(Absorbance)*0.8, max(Absorbance)*1.2)) +
+            ggtitle(ID) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  )
+
+phenol %$% 
+  wrap_plots(Technical_Prediction_Plot) %>%
+  ggsave(filename = "Technical_Prediction.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 60, width = 60, units = "cm")
+
 # 2. Standard curve models ####
 # 2.1 Visualise data ####
 phenol %<>%
@@ -851,25 +1118,7 @@ phenol$Samples_Data_Converted[[3]]
 # estimated distribution Concentration because this will be constrained to
 # positive values only in the next model. 
 
-# 3. Technical triplicate models ####
-# 3.1 Prepare data ####
-# I no longer want the plate-nested structure of phenol because
-# the plate-specific data (standard curve) can now be disregarded.
-# Instead a nesting by ID is useful because each ID is a biological
-# sample and contains a technical triplicate.
 
-# Save data associated with plate structure to separate tibble.
-plates <- phenol
-
-# Re-nest phenol.
-phenol %<>%
-  select(Name, Date, Plate, Samples_Data_Converted) %>%
-  unnest(cols = Samples_Data_Converted) %>%
-  group_by(Name, Date, Plate, ID, Mass) %>%
-  nest(.key = "Technical_Data")
-
-phenol
-phenol$Technical_Data[[30]]
 
 # Calculate summary.
 phenol %<>%
@@ -884,47 +1133,7 @@ phenol %<>%
       )
   )
 
-phenol
-phenol$Technical_Data_Summary[[20]]
-
-# 3.2 Visualise data ####
-require(ggdist)
-phenol %<>%
-  rowwise() %>%
-  mutate(
-    Technical_Plot = 
-      list(
-        Technical_Data %>%
-          ggplot(aes(Concentration, Well)) +
-            stat_slab(height = 2, colour = "black") +
-            ggtitle(ID) +
-            theme_minimal()
-        )
-    ) %>%
-  ungroup()
-
-phenol %$% 
-  wrap_plots(Technical_Plot) %>%
-  ggsave(filename = "Technical_Plot.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
-         height = 80, width = 80, units = "cm")
-
-# 3.3 Prior simulation ####
-# The only thing I know to be consistent across samples is that they need
-# to be positive, so I will use a gamma likelihood. The intercept alpha
-# can then be normally distributed.
-
-tibble(alpha = rnorm( 1e5 , log(0.5) , 0.8 ),
-       mu = alpha %>% exp()) %>%
-  ggplot(aes(y = mu)) +
-    geom_hline(yintercept = c(0, 1)) + # concentrations are between 0 and 1
-    geom_density(orientation = "y", colour = NA, fill = "black", alpha = 0.5) +
-    coord_cartesian(expand = F, clip = "off") +
-    theme_minimal()
-# Covers all reasonable possibilities.
-
-# 3.4 Run model ####
-technical_stan <- "
+"
     data{ 
       int n;
       vector[n] Concentration_mean;
@@ -952,25 +1161,5 @@ technical_stan <- "
                                   Concentration ./ square(Concentration_sd) );
       }
 "
-
-technical_model <- technical_stan %>%
-  write_stan_file() %>%
-  cmdstan_model()
-  
-phenol %<>%
-  mutate(
-    Technical_Samples = Technical_Data_Summary %>%
-      map(
-        ~ technical_model$sample(
-          data = .x %>%
-            select(Concentration_mean, Concentration_sd) %>%
-            compose_data(),
-          chains = 8,
-          parallel_chains = parallel::detectCores(),
-          iter_warmup = 1e4,
-          iter_sampling = 1e4
-        )
-        )
-  )
 
 # Model fails because non-negativity in Concentration_mean is not allowed.
