@@ -61,47 +61,8 @@ phenol %<>%
     ) %>%
   select(-Data)
 phenol
-
-# 1.5 Filter out samples that exceed the standard curve ####
-# Some replicates exceed the standard curve, which cannot be extrapolated.
-# In this case the whole sample was diluted and run again. I need to 
-# remove all samples which exceed the standard curve, even if only in
-# one technical replicate.
-
-# Example:
-phenol$Standard_Data[[5]] %>%
-  print(n = 21) # Maximum standard curve Absorbance is 2.6 a.u., 
-# and mean max is
-phenol$Standard_Data[[5]] %>%
-  group_by(Concentration) %>%
-  summarise(Absorbance = mean(Absorbance)) %$%
-  max(Absorbance) # 2.502 a.u.
-
-phenol$Samples_Data[[5]] %>%
-  print(n = 36) # Several samples exceed this (e.g. U9_A1)
-
-phenol %<>%
-  mutate(
-    Samples_Data = Samples_Data %>%
-      map2(
-        Standard_Data,
-        ~ .x %>%
-          group_by(ID) %>%
-          filter( 
-            all( 
-              Absorbance <= .y %>%
-                group_by(Concentration) %>%
-                summarise(Absorbance = mean(Absorbance)) %$% 
-                max(Absorbance) 
-              ) 
-            ) %>%
-          ungroup()
-      )
-  )
-
-# Test:
-phenol$Samples_Data[[5]] %>%
-  print(n = 36) # All remaining samples are within standard curve.
+phenol$Standard_Data[[3]]
+phenol$Samples_Data[[2]]
 
 # 2. Technical triplicate models ####
 # 2.1 Prepare data ####
@@ -155,40 +116,57 @@ phenol %$%
 
 # 2.3 Prior simulation ####
 # One thing I know to be consistent across samples is that they need
-# to be positive and they are likely between 0 and 2.8, which is roughly
-# the maximal absorbance for this chromophore. Previously I modelled
-# absorbance with a gamma likelihood to ensure positivity but this causes
-# long distribution tails when propagating uncertainty and is not strictly
-# necessary because even a normal likelihood will be positive given little
-# variation. Also it is helpful to use truncation above 2.8 which is easiest
-# to do with a normal likelihood, truncated at 0 and 2.8. 
+# to be positive and they are likely between 0 and 2.6, which is roughly
+# the maximal absorbance for this chromophore. The intercept alpha
+# can then be normally distributed around the log mean and the log link
+# function together with the gamma likelihood ensure positivity. Due
+# to the low number of technical replicates there are divergences
+# if I set the prior on the grand mean.
+phenol$Technical_Data %>% 
+  bind_rows() %$% 
+  mean(Absorbance) %>% 
+  signif(1)
 
-# Due to the low number of technical replicates (n = 3) there are divergences 
-# if I set the prior on the grand mean. Therefore, I'll include the calculated 
-# mean in the Stan model, and centre the prior for mu on that with 8% relative sd. 
-# sigma has the usual exponential prior but the rate is inversely related to the 
-# calculated mean.
+tibble(alpha = rnorm( 1e5 , log(0.8) , 1 ),
+       mu = alpha %>% exp(),
+       sigma = rexp( 1e5 , 5 ),
+       A = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
+  ggplot(aes(y = A)) +
+    geom_hline(yintercept = c(0, 2.6)) + # absorbances are between 0 and 2.6
+    geom_density(orientation = "y", colour = NA, fill = "black", alpha = 0.5) +
+    scale_y_continuous(limits = c(0, 5),
+                       oob = scales::oob_keep) +
+    coord_cartesian(expand = F, clip = "off",
+                    ylim = c(0, 5)) +
+    theme_minimal()
+
+# Therefore, I'll include the calculated mean in the Stan model,
+# and centre the prior on the log of that.
 
 # 2.4 Run model ####
 technical_stan <- "
     data{
       int n;
-      vector<lower=0,upper=2.8>[n] Absorbance;
-      real Absorbance_mean;
+      vector<lower=0>[n] Absorbance;
+      real<lower=0> Absorbance_mean;
       }
 
     parameters{
-      real<lower=0,upper=2.8> mu;
-      real<lower=0> sigma;
+      real alpha; // Intercept in the log space
+      real<lower=0> sigma; // Likelihood uncertainty
       }
 
     model{
       // Priors
-      mu ~ normal( Absorbance_mean , 0.08 * Absorbance_mean ) T[ 0 , 2.8 ];
-      sigma ~ exponential( 15 / ( Absorbance_mean + 0.4 ) );
+      alpha ~ normal( log(Absorbance_mean) , 0.2 );
+      sigma ~ exponential( 5 );
 
-      // Likelihood
-      Absorbance ~ normal( mu , sigma ) T[ 0 , 2.8 ];
+      // Model
+      real mu;
+      mu = exp( alpha ); // Log link function
+
+      // Gamma likelihood
+      Absorbance ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
       }
 "
 
@@ -234,8 +212,9 @@ phenol %<>%
 
 phenol %>% 
   select(Name, ID, rhat_1.001, rhat_mean, rhat_sd) %>%
-  print(n = 77)
-# No rhat above 1.001.
+  print(n = 91)
+# Almost no rhat above 1.001, and even the few problematic cases have a mean
+# rhat of 1.00 with small sd.
 
 # 2.5.2 Chains ####
 require(bayesplot)
@@ -246,7 +225,7 @@ phenol %<>%
       list(
         Technical_Samples$draws(format = "df") %>%
           mcmc_rank_overlay() +
-          ggtitle(ID)
+          ggtitle(Name)
         )
       ) %>%
   ungroup()
@@ -262,16 +241,15 @@ phenol %<>%
 
 # 2.6 Prior-posterior comparison ####
 # 2.6.1 Sample priors ####
-require(truncnorm) # R doesn't have a native turncated normal.
 phenol %<>%
   mutate(
     Technical_Prior = Absorbance_mean %>%
       map(
         ~ tibble(.chain = 1:8 %>% rep(each = 1e4),
                  .iteration = 1:1e4 %>% rep(times = 8),
-                 .draw = 1:8e4, # variable mean and sd
-                 mu = rtruncnorm( n = 8e4 , mean = .x , sd = 0.08 * .x , a = 0 , b = 2.8 ), 
-                 sigma = rexp( 8e4 , 15 / ( .x + 0.4 ) ))
+                 .draw = 1:8e4,
+                 alpha = rnorm( 8e4 , log(.x) , 0.2 ), # variable log mean
+                 sigma = rexp( 8e4 , 5 ))
       )
   )
 
@@ -280,7 +258,7 @@ phenol %<>%
   mutate(
     Technical_Posterior = Technical_Samples %>%
       map(
-        ~ .x %>% spread_draws(mu, sigma)
+        ~ .x %>% spread_draws(alpha, sigma)
       )
   )
 
@@ -295,11 +273,11 @@ phenol %<>%
             bind_rows(Technical_Posterior) %>%
             mutate(distribution = c("prior", "posterior") %>%
                      rep(each = 8e4) %>% fct()) %>%
-            pivot_longer(cols = c(mu, sigma),
+            pivot_longer(cols = c(alpha, sigma),
                          names_to = ".variable",
                          values_to = ".value") %>%
             prior_posterior_plot() +
-            ggtitle(ID)
+            ggtitle(Name)
       )
   ) %>%
   ungroup()
@@ -320,7 +298,8 @@ phenol %<>%
     Technical_Prediction = Technical_Posterior %>%
       map(
         ~ .x %>%
-          mutate(Absorbance = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 , b = 2.8 ))
+          mutate(mu = exp( alpha ),
+                 Absorbance = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ))
       )
   )
 
@@ -341,9 +320,8 @@ phenol %<>%
             stat_eye(data = Technical_Prediction,
                      aes(2, Absorbance), alpha = 0.5,
                      point_interval = NULL) +
-            coord_cartesian(ylim = Technical_Data %$%
-                              c( (1 - 0.4) * Absorbance_mean, 
-                                 (1 + 0.4) * Absorbance_mean )) +
+            scale_y_continuous(limits = Technical_Data %$% 
+                                 c(min(Absorbance)*0.8, max(Absorbance)*1.2)) +
             ggtitle(ID) +
             theme_minimal() +
             theme(panel.grid = element_blank())
@@ -740,25 +718,25 @@ phenol %<>%
     Standard_lm_Chains = 
       list(
         Standard_lm_Samples$draws(format = "df") %>%
-          mcmc_rank_overlay(pars = c("A0", "beta", "sigma")) +
+          mcmc_rank_overlay() +
           ggtitle(Name) # and adding titles
       ),
     Standard_rh_Chains =
       list(
         Standard_rh_Samples$draws(format = "df") %>%
-          mcmc_rank_overlay(pars = c("A0", "Amax", "beta", "sigma")) +
+          mcmc_rank_overlay() +
           ggtitle(Name) # and adding titles
       ),
     Standard_es_Chains =
       list(
         Standard_es_Samples$draws(format = "df") %>%
-          mcmc_rank_overlay(pars = c("A0", "Amax", "beta", "sigma")) +
+          mcmc_rank_overlay() +
           ggtitle(Name) # and adding titles
       ),
     Standard_ht_Chains =
       list(
         Standard_ht_Samples$draws(format = "df") %>%
-          mcmc_rank_overlay(pars = c("A0", "Amax", "beta", "sigma")) +
+          mcmc_rank_overlay() +
           ggtitle(Name) # and adding titles
       )
     ) %>%
@@ -1133,10 +1111,10 @@ phenol %<>%
       list(
         loo_compare(
           list(
-            lm = Standard_lm_Samples$loo(cores = parallel::detectCores()),
-            rh = Standard_rh_Samples$loo(cores = parallel::detectCores()),
-            es = Standard_es_Samples$loo(cores = parallel::detectCores()),
-            ht = Standard_ht_Samples$loo(cores = parallel::detectCores())
+            lm = Standard_lm_Samples$loo(),
+            rh = Standard_rh_Samples$loo(),
+            es = Standard_es_Samples$loo(),
+            ht = Standard_ht_Samples$loo()
           )
         )        
       )
@@ -1174,9 +1152,8 @@ phenol %<>%
           mean_qi(mu, .width = c(.5, .8, .9))
         )
     )
-# Some NaNs produced, likely by atanh(), which is defined between -1 and 1,
-# so if A0 = 0 and a low sample of Amax = 2.4, then some values for Absorbance
-# will be higher than Amax and cause values above 1 to be passed to atanh().
+# Clearly not the entire posterior distribution is supported by atanh(),
+# leading to NaNs.
 
 # Plot inverse prediction
 phenol %<>%
@@ -1236,7 +1213,7 @@ phenol %<>%
       map2(
         Standard_ht_Prior_Posterior,
         ~ .x %>%
-          select(-c(mu, sigma)) %>%
+          select(-c(alpha, sigma, mu)) %>%
           full_join(
             .y %>% 
               filter(distribution == "posterior") %>%
@@ -1251,7 +1228,227 @@ phenol %<>%
 
 phenol$Samples_Data %>% 
   map(~ .x %>% filter(is.nan(Concentration)))
-# Very few NaNs produced (maximum 2 per sample). That's good enough.
+# Mhm too many NaNs. I'll have to go with the second-best model after all.
+
+# 3.9.5 Re-nest data ####
+phenol %<>%
+  group_by(
+    Name, Date, Plate, loo_comparison,
+    across(
+      c(starts_with("Standard"),
+        ends_with("lm"), ends_with("rh"),
+        ends_with("_es"), ends_with("ht"))
+      )
+    ) %>%
+  nest(.key = "Technical")
+  
+phenol
+phenol$Technical
+# Successful re-nesting. We're back to the plate structure.
+
+# 3.9.6 Model selection ####
+# Now what's the second-best model?
+phenol$loo_comparison
+# The rectangular hyperbola is best two out of five times but this doesn't
+# mean it is the second-best model. ht is no longer a contender and lm 
+# clearly fits worst in all cases, so it makes sense to compare es and rh.
+
+phenol %<>%
+  rowwise() %>%
+  mutate(
+    loo_comparison =
+      list(
+        loo_compare(
+          list(
+            rh = Standard_rh_Samples$loo(),
+            es = Standard_es_Samples$loo()
+          )
+        )        
+      )
+  ) %>%
+  ungroup()
+
+phenol$loo_comparison 
+# es is best in three cases and rh in two cases. Let's summarise.
+
+phenol$loo_comparison %>%
+  map(~ .x %>% as_tibble(rownames = "model")) %>%
+  bind_rows() %>%
+  group_by(model) %>%
+  summarise(elpd_diff_mean = mean(elpd_diff),
+            elpd_loo_mean = mean(elpd_loo),
+            p_loo_mean = mean(p_loo),
+            looic_mean = mean(looic)) %>%
+  arrange(elpd_loo_mean %>% desc())
+# es is generally better, has higher predictive accuracy (higher elpd_loo, lower looic)
+# despite more effective parameters (higher p_loo).
+
+# 3.9.6 Rearrange parameters ####
+# The optimal standard curve model takes the form Absorbance = A0 + Amax * 
+# ( 1 - exp( -beta * Concentration / Amax ) ), so it predicts Absorbance with
+# Concentration. I want to do the inverse, that is predict Concentration
+# with Absorbance. Solving for Concentration, I get Concentration = - Amax / beta *
+# log( 1 - ( Absorbance - A0 ) / Amax ).
+
+# 3.9.7 Visualise ####
+# Reminder of original prediction
+phenol %$% wrap_plots(Standard_es_Prediction_Plot) 
+
+# Calculate inverse prediction
+phenol %<>%
+  mutate(
+    Standard_es_Inverse_Prediction = Standard_es_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x %>%
+                              filter(distribution == "posterior"),
+                            data = .y,
+                            predictor_name = "Absorbance") %>%
+          mutate(mu = - Amax / beta * log( 1 - ( Absorbance - A0 ) / Amax )) %>%
+          group_by(distribution, Absorbance) %>%
+          mean_qi(mu, .width = c(.5, .8, .9))
+        )
+    )
+# No NaNs produced. Good start.
+
+# Plot inverse prediction
+phenol %<>%
+  rowwise() %>% 
+  mutate(
+    Standard_es_Inverse_Prediction_Plot =
+      list(
+        Standard_es_Inverse_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Absorbance, Concentration)) +
+            geom_line(aes(Absorbance, mu)) +
+            geom_ribbon(aes(Absorbance, ymin = .lower, ymax = .upper,
+                            alpha = factor(.width))) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  ) %>%
+  ungroup()
+
+phenol %$% wrap_plots(Standard_es_Inverse_Prediction_Plot)
+# Looks fine.
+
+# 3.9.8 Re-nest data ####
+phenol %<>% unnest(cols = Technical)
+
+# 3.9.9 Calculate sample concentration ####
+phenol %<>%
+  mutate(
+    Samples_Data = Technical_Prediction %>%
+      map2(
+        Standard_es_Prior_Posterior,
+        ~ .x %>%
+          select(-c(alpha, sigma, mu)) %>%
+          full_join(
+            .y %>% 
+              filter(distribution == "posterior") %>%
+              select(-c(distribution, sigma)),
+            by = c(".chain", ".iteration", ".draw")
+            ) %>% 
+          mutate( # Here's where the magic happens!
+            Concentration = - Amax / beta * log( 1 - ( Absorbance - A0 ) / Amax )
+            )
+      )
+  )
+# Passing the sample estimates through exponential saturation inverse prediction 
+# unfortunately also produces NaNs.
+
+phenol$Samples_Data %>% 
+  map(~ .x %>% filter(is.nan(Concentration)))
+# Fewer NaNs than before, but still not ideal. I'll have to try the
+# rectangular hyperbola after all.
+
+# 3.9.10 Re-nest data ####
+phenol %<>%
+  group_by(
+    Name, Date, Plate, loo_comparison,
+    across(
+      c(starts_with("Standard"),
+        ends_with("lm"), ends_with("rh"),
+        ends_with("_es"), ends_with("ht"))
+    )
+  ) %>%
+  nest(.key = "Technical")
+
+# 3.9.11 Rearrange parameters ####
+# The rectangular hyperbola Absorbance = A0 + Amax * beta * Concentration / 
+# ( Amax + beta * Concentration ) translates to Concentration = Amax * 
+# ( Absorbance - A0 ) / ( beta * ( A0 + Amax - Absorbance ) ).
+
+# 3.9.12 Visualise ####
+# Reminder of original prediction
+phenol %$% wrap_plots(Standard_rh_Prediction_Plot) 
+
+# Calculate inverse prediction
+phenol %<>%
+  mutate(
+    Standard_rh_Inverse_Prediction = Standard_rh_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x %>%
+                              filter(distribution == "posterior"),
+                            data = .y,
+                            predictor_name = "Absorbance") %>%
+          mutate(mu = Amax * ( Absorbance - A0 ) / ( beta * ( A0 + Amax - Absorbance ) )) %>%
+          group_by(distribution, Absorbance) %>%
+          mean_qi(mu, .width = c(.5, .8, .9))
+      )
+  )
+# No NaNs produced. Good start.
+
+# Plot inverse prediction
+phenol %<>%
+  rowwise() %>% 
+  mutate(
+    Standard_rh_Inverse_Prediction_Plot =
+      list(
+        Standard_rh_Inverse_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, aes(Absorbance, Concentration)) +
+            geom_line(aes(Absorbance, mu)) +
+            geom_ribbon(aes(Absorbance, ymin = .lower, ymax = .upper,
+                            alpha = factor(.width))) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  ) %>%
+  ungroup()
+
+phenol %$% wrap_plots(Standard_rh_Inverse_Prediction_Plot)
+# Looks fine.
+
+# 3.9.13 Re-nest data ####
+phenol %<>% unnest(cols = Technical)
+
+# 3.9.14 Calculate sample concentration ####
+phenol %<>%
+  mutate(
+    Samples_Data = Technical_Prediction %>%
+      map2(
+        Standard_rh_Prior_Posterior,
+        ~ .x %>%
+          select(-c(alpha, sigma, mu)) %>%
+          full_join(
+            .y %>% 
+              filter(distribution == "posterior") %>%
+              select(-c(distribution, sigma)),
+            by = c(".chain", ".iteration", ".draw")
+          ) %>% 
+          mutate( # Here's where the magic happens!
+            Concentration = Amax * ( Absorbance - A0 ) / ( beta * ( A0 + Amax - Absorbance ) )
+          )
+      )
+  )
+# Success! No NaNs. So it turns out model score (elpd_loo etc.) is inversely related to 
+# numerical stability (not producing NaNs).
 
 # Calculate summary.
 phenol %<>%
@@ -1279,8 +1476,6 @@ phenol %<>%
   ggsave(filename = "Samples_Data.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 20, units = "cm")
-
-######################
 
 # 4.2 Prepare data ####
 phenol %>%
