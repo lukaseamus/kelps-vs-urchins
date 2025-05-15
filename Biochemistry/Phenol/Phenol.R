@@ -88,12 +88,10 @@ phenol %<>%
         ~ .x %>%
           group_by(ID) %>%
           filter( 
-            all( 
-              Absorbance <= .y %>%
+              mean(Absorbance) <= .y %>%
                 group_by(Concentration) %>%
                 summarise(Absorbance = mean(Absorbance)) %$% 
                 max(Absorbance) 
-              ) 
             ) %>%
           ungroup()
       )
@@ -169,7 +167,7 @@ phenol %$%
 # sigma has the usual exponential prior but the rate is inversely related to the 
 # calculated mean.
 
-# 2.4 Run model ####
+# 2.4 Stan model ####
 technical_stan <- "
     data{
       int n;
@@ -1252,6 +1250,36 @@ phenol %<>%
 phenol$Samples_Data %>% 
   map(~ .x %>% filter(is.nan(Concentration)))
 # Very few NaNs produced (maximum 2 per sample). That's good enough.
+# Still enough samples and it adds further regularisation.
+
+# Remove NaNs.
+phenol %<>%
+  mutate(
+    Samples_Data = Samples_Data %>%
+      map(
+        ~ .x %>% filter(!is.nan(Concentration))
+      )
+  )
+
+phenol$Samples_Data %>% 
+  map_lgl(~ .x %$% any(is.nan(Concentration))) %>%
+  any()
+# No more NaNs.
+
+# Multiply 50% diluted samples by 2.
+phenol %<>%
+  mutate(
+    Samples_Data = if_else(ID %>% str_detect("50%"),
+                           Samples_Data %>%
+                             map(
+                               ~ .x %>%
+                                 mutate(Concentration = Concentration * 2)
+                             ),
+                           Samples_Data),
+    ID = if_else(ID %>% str_detect("50%"),
+                 ID %>% str_remove("_50%"),
+                 ID) %>% fct()
+    )
 
 # Calculate summary.
 phenol %<>%
@@ -1264,55 +1292,272 @@ phenol %<>%
       )
   )
 
-# 4. Experimental model ####
+# 4. Phenol model ####
 # 4.1 Visualise ####
 ( phenol %>%
     select(Name, ID, Samples_Data) %>%
     unnest(cols = Samples_Data) %>%
     ggplot(aes(Concentration, ID)) +
       geom_vline(xintercept = 0) +
-      stat_slab(n = 2e3, colour = "black", height = 10) +
-      facet_wrap(~ Name, nrow = 5, scales = "free") +
-      coord_cartesian(xlim = c(0, 1.5)) +
+      stat_slab(n = 2e3, height = 10, 
+                colour = "black", linewidth = 0.1) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
       theme_minimal() +
       theme(panel.grid = element_blank()) ) %>%
   ggsave(filename = "Samples_Data.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 20, units = "cm")
 
-######################
+( phenol %>%
+    select(Name, ID, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    ggplot(aes(Concentration_mean, ID)) +
+      geom_vline(xintercept = 0) +
+      geom_pointrange(aes(xmin = Concentration_mean - Concentration_sd,
+                          xmax = Concentration_mean + Concentration_sd)) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "Samples_Data_Summary.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 20, units = "cm")
 
 # 4.2 Prepare data ####
-phenol %>%
-  select(Name, Date, Plate, ID, Mass, Samples_Data, Samples_Data_Summary) 
+# I need to extract several other variables from ID and Date for the model.
+phenol %<>%
+  mutate(Urchin = if_else(ID %>% str_detect("f") | ID %>% str_detect("F"),
+                          "Faeces", "Kelp") %>% fct(),
+         Experiment = case_when(
+                        Date %>% year() == 2023 ~ 1,
+                        Date %>% year() == 2025 &
+                          ID %>% str_split_i(pattern = "_",
+                                             i = 2) %>%
+                                 str_detect("1") ~ 2,
+                        Date %>% year() == 2025 &
+                          ID %>% str_split_i(pattern = "_",
+                                             i = 2) %>%
+                                 str_detect("2") ~ 3
+                        ) %>% str_c() %>% fct(),
+         Tank = if_else(Date %>% year() == 2023,
+                        ID %>% str_extract("\\d+"),
+                        ID %>% str_split_i(pattern = "_",
+                                           i = 1) %>%
+                               str_extract("\\d+")) %>%
+                fct()
+         )
 
-"
+# Here are the data I'll pass to the model:
+phenol %>%
+  select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+  unnest(cols = Samples_Data_Summary) %>%
+  print(n = 79)
+
+# 4.3 Prior simulation ####
+# The experimental model will compare phenolic content of urchin faeces and
+# kelp while accounting for season. I will model these data with a gamma
+# likelihood, which ensures positivity and accounts fo the increase in 
+# uncertainty with the increase in mean seen in the visualisation. In truth
+# the data ultimately follow a beta distribution because phenolic content
+# is given in mg mL^-1 of phloroglucinol equivalents. All extracts have
+# a 10% (w/v) concentration, i.e. 100 mg mL^-1, so mass-based concentration,
+# which I am interested in is mg 100 mg^-1 or %, which is capped at 100.
+# However, the beta distribution is hard to meaningfully parameterise and
+# the maximal phenolic content measured here is below 2%, so the gamma
+# distribution is an excellent approximation. The expected mean polyphenolic
+# content for Laminaria hyperborea is 1.07 ± 0.07% according to Wright et al.
+# 2022 (doi: 10.1111/gcb.16299). Based on the litertaure alone, my prior 
+# expectation is that the mean for both treatments must fall near 1.07%.
+
+tibble(n = 1:1e5,
+       mu_log = rnorm( 1e5 , log(1.07) , 0.35 ),
+       sigma = rexp( 1e5, 5 ),
+       mu = exp(mu_log),
+       P = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
+  pivot_longer(cols = c(mu, P), 
+               names_to = "parameter", values_to = "value") %>%
+  ggplot(aes(value, parameter)) +
+    geom_vline(xintercept = c(0, 2)) +
+    stat_slab(alpha = 0.5, height = 2) +
+    coord_cartesian(expand = F,
+                    xlim = c(-1, 3)) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Looks reasonable.
+
+# 4.4 Stan model ####
+phenol_stan <- "
     data{ 
       int n;
       vector[n] Concentration_mean;
-      vector<lower=0>[n] Concentration_sd;
+      vector[n] Concentration_sd;
+      array[n] int Urchin; // Urchin effect
+      int n_Urchin;
+      //array[n] int Experiment; // Repeat
+      //int n_Experiment;
+      array[n] int Tank; // Tanks across repeats
+      int n_Tank;
       }
 
     parameters{
-      vector[n] Concentration; // True estimates for measurement error
-      real alpha; // Intercept in the log space
-      real<lower=0> sigma; // Likelihood uncertainty
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Urchin] alpha_u; 
+      // vector[n_Experiment] z_e; // z-scores
+      vector[n_Tank] z_t; 
+      
+      // Experiment and tank uncertainties
+      // real<lower=0> sigma_e;
+      real<lower=0> sigma_t;
+      
+      // Likelihood uncertainty
+      real<lower=0> sigma; 
       }
 
     model{
+      // Hyperpriors
+      // sigma_e ~ exponential( 1 );
+      sigma_t ~ exponential( 1 );
+      
       // Priors
-      alpha ~ normal( log(0.5) , 0.8 );
-      sigma ~ exponential( 1 );
+      alpha_u ~ normal( log(1.07) , 0.35 );
+      // z_e ~ normal( 0 , 1 );
+      z_t ~ normal( 0 , 1 );
+      sigma ~ exponential( 5 );
+      
+      // Convert z-scores
+      //vector[n_Experiment] alpha_e;
+      //alpha_e = z_e * sigma_e + 0;
+      vector[n_Tank] alpha_t;
+      alpha_t = z_t * sigma_t + 0;
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha_u[ Urchin[i] ] + 
+                     //alpha_e[ Experiment[i] ] + 
+                     alpha_t[ Tank[i] ] );
+      }
 
-      // Model
-      real mu;
-      mu = exp( alpha ); // Log link function
-
-      // Gamma likelihood with normal measurement error (note elementwise division)
+      // Likelihood with measurement error
       Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
-      Concentration_mean ~ gamma( square(Concentration) ./ square(Concentration_sd) , 
-                                  Concentration ./ square(Concentration_sd) );
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+      }
+    
+    generated quantities{
+      // Save converted z-scores
+      //vector[n_Experiment] alpha_e;
+      //alpha_e = z_e * sigma_e + 0;
+      vector[n_Tank] alpha_t;
+      alpha_t = z_t * sigma_t + 0;
       }
 "
 
-# Model fails because non-negativity in Concentration_mean is not allowed.
+phenol_model <- phenol_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_samples <- phenol_model$sample(
+          data = phenol %>%
+            select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        )
+# Some divergences despite non-centred parameterisation.
+
+# 4.5 Model checks ####
+# 4.5.1 Rhat ####
+phenol_samples$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# No rhat above 1.001.
+
+# 4.5.2 Chains ####
+phenol_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+
+# 4.6 Prior-posterior comparison ####
+# 4.6.1 Sample prior ####
+phenol_prior <- prior_samples(
+  model = phenol_model,
+  data = phenol %>%
+    select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+  )
+
+# 4.6.2 Plot prior-posterior comparison ####
+phenol_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples,
+    group = phenol %>%
+      select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Urchin, Tank),
+    parameters = c("alpha_t[Tank]", 
+                   #"alpha_e[Experiment]", 
+                   "alpha_u[Urchin]", 
+                   "z_t[Tank]", 
+                   #"z_e[Experiment]",
+                   "sigma", 
+                   #"sigma_e", 
+                   "sigma_t"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Urchin") %>%
+      print() } %>%
+  # { prior_posterior_plot(., group_name = "Experiment") %>%
+  #     print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+# alpha_e shows a consitent shift below zero so seems to be compensating for
+# something. This is because of the imbalance between treatments in experiment 1.
+# Try modelling experimental and tank uncertainty within rather than across treatments.
+
+
+# This isn't necessarily concerning since all alphas will be added.
+# alpha_u is escaping the prior space for both groups, but that is part of the 
+# story, so is not concerning.
+
+# 4.7 Prediction ####
+# 4.7.1 Combine relevant priors and posteriors ####
+phenol_prior_posterior <- phenol_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples,
+    group = phenol %>%
+      select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Urchin),
+    parameters = c("alpha_u[Urchin]", "sigma", "sigma_e", "sigma_t"),
+    format = "short"
+  )
+
+# 4.7.2 Calculate predictions for new experiments and tanks ####
+phenol_prior_posterior %<>%
+  mutate(mu = exp( alpha_u ),
+         obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ))
+
+# 4.7.3 Plot predictions ####
+phenol_prior_posterior %>% # priors are identical for both treatments
+  filter(!(Urchin == "Faeces" & distribution == "prior")) %>% # remove one
+  mutate(Urchin = if_else(distribution == "prior",
+                          "Prior", Urchin) %>% fct()) %>%
+  select(-distribution) %>%
+  pivot_longer(cols = c(mu, obs), values_to = "Concentration", names_to = "Level") %>%
+  ggplot(aes(Concentration, Urchin, alpha = Level)) +
+    stat_slab(height = 10, n = 2e3) +
+    scale_alpha_manual(values = c(0.6, 0.3)) +
+    coord_cartesian(xlim = c(0, 2)) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
