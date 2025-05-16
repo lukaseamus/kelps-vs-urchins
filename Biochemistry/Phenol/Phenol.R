@@ -1327,19 +1327,19 @@ phenol %<>%
 # 4.2 Prepare data ####
 # I need to extract several other variables from ID and Date for the model.
 phenol %<>%
-  mutate(Urchin = if_else(ID %>% str_detect("f") | ID %>% str_detect("F"),
-                          "Faeces", "Kelp") %>% fct(),
-         Experiment = case_when(
-                        Date %>% year() == 2023 ~ 1,
-                        Date %>% year() == 2025 &
-                          ID %>% str_split_i(pattern = "_",
-                                             i = 2) %>%
-                                 str_detect("1") ~ 2,
-                        Date %>% year() == 2025 &
-                          ID %>% str_split_i(pattern = "_",
-                                             i = 2) %>%
-                                 str_detect("2") ~ 3
-                        ) %>% str_c() %>% fct(),
+  mutate(Treatment = if_else(ID %>% str_detect("f") | ID %>% str_detect("F"),
+                             "Faeces", "Kelp") %>% fct(),
+         Season = case_when(
+                    Date %>% year() == 2023 ~ "Autumn",
+                    Date %>% year() == 2025 &
+                      ID %>% str_split_i(pattern = "_",
+                                         i = 2) %>%
+                      str_detect("1") ~ "Spring",
+                    Date %>% year() == 2025 &
+                      ID %>% str_split_i(pattern = "_",
+                                         i = 2) %>%
+                      str_detect("2") ~ "Summer"
+                    ) %>% str_c() %>% fct(),
          Tank = if_else(Date %>% year() == 2023,
                         ID %>% str_extract("\\d+"),
                         ID %>% str_split_i(pattern = "_",
@@ -1350,7 +1350,7 @@ phenol %<>%
 
 # Here are the data I'll pass to the model:
 phenol %>%
-  select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+  select(Treatment, Season, Tank, Samples_Data_Summary) %>%
   unnest(cols = Samples_Data_Summary) %>%
   print(n = 79)
 
@@ -1371,7 +1371,7 @@ phenol %>%
 # expectation is that the mean for both treatments must fall near 1.07%.
 
 tibble(n = 1:1e5,
-       mu_log = rnorm( 1e5 , log(1.07) , 0.35 ),
+       mu_log = rnorm( 1e5 , log(1.07) , 1 ),
        sigma = rexp( 1e5, 5 ),
        mu = exp(mu_log),
        P = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
@@ -1379,7 +1379,7 @@ tibble(n = 1:1e5,
                names_to = "parameter", values_to = "value") %>%
   ggplot(aes(value, parameter)) +
     geom_vline(xintercept = c(0, 2)) +
-    stat_slab(alpha = 0.5, height = 2) +
+    stat_slab(alpha = 0.5, height = 2, n = 3e3) +
     coord_cartesian(expand = F,
                     xlim = c(-1, 3)) +
     theme_minimal() +
@@ -1387,99 +1387,223 @@ tibble(n = 1:1e5,
 # Looks reasonable.
 
 # 4.4 Stan model ####
-phenol_stan <- "
+# Typically non-centred parameterisation works better but I read that when the 
+# data are strong, as is arguably the case here, centred parameterisation can
+# perform better (https://betanalpha.github.io/assets/case_studies/hierarchical
+# _modeling.html#323_Backhanded_Complements), so I'll try both.
+phenol_stan_c <- "
     data{ 
       int n;
       vector[n] Concentration_mean;
       vector[n] Concentration_sd;
-      array[n] int Urchin; // Urchin effect
-      int n_Urchin;
-      //array[n] int Experiment; // Repeat
-      //int n_Experiment;
-      array[n] int Tank; // Tanks across repeats
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
       int n_Tank;
-      }
+    }
 
     parameters{
       // True estimates for measurement error
       vector<lower=0>[n] Concentration; 
       
       // Intercepts in log space
-      vector[n_Urchin] alpha_u; 
-      // vector[n_Experiment] z_e; // z-scores
-      vector[n_Tank] z_t; 
+      vector[n_Treatment] alpha; 
+      matrix[n_Season, n_Treatment] alpha_s;
+      matrix[n_Tank, n_Treatment] alpha_t; 
       
-      // Experiment and tank uncertainties
-      // real<lower=0> sigma_e;
-      real<lower=0> sigma_t;
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
       
       // Likelihood uncertainty
-      real<lower=0> sigma; 
-      }
+      vector<lower=0>[n_Treatment] sigma; 
+    }
 
     model{
       // Hyperpriors
-      // sigma_e ~ exponential( 1 );
-      sigma_t ~ exponential( 1 );
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
       
       // Priors
-      alpha_u ~ normal( log(1.07) , 0.35 );
-      // z_e ~ normal( 0 , 1 );
-      z_t ~ normal( 0 , 1 );
+      alpha ~ normal( log(1.07) , 1 );
+      for (i in 1:n_Treatment) {
+        alpha_s[,i] ~ normal( 0 , sigma_s[i] );
+        alpha_t[,i] ~ normal( 0 , sigma_t[i] );
+      }
       sigma ~ exponential( 5 );
-      
-      // Convert z-scores
-      //vector[n_Experiment] alpha_e;
-      //alpha_e = z_e * sigma_e + 0;
-      vector[n_Tank] alpha_t;
-      alpha_t = z_t * sigma_t + 0;
       
       // Model with link function
       vector[n] mu;
       for ( i in 1:n ) {
-        mu[i] = exp( alpha_u[ Urchin[i] ] + 
-                     //alpha_e[ Experiment[i] ] + 
-                     alpha_t[ Tank[i] ] );
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Season[i] , Treatment[i] ] + 
+                     alpha_t[ Tank[i] , Treatment[i] ] );
       }
 
-      // Likelihood with measurement error
-      Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
-      Concentration_mean ~ normal( Concentration , Concentration_sd );
+      // Gamma likelihood
+      // Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
+      for (i in 1:n) {
+        Concentration[i] ~ gamma( square( mu[i] ) / square( sigma[ Treatment[i] ] ) ,
+                                  mu[i] / square( sigma[ Treatment[i] ] ) );
       }
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
+"
+
+phenol_stan_nc <- "
+    data{ 
+      int n;
+      vector[n] Concentration_mean;
+      vector[n] Concentration_sd;
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
+      int n_Tank;
+    }
+
+    parameters{
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Treatment] alpha; 
+      matrix[n_Season, n_Treatment] z_s; // z-scores
+      matrix[n_Tank, n_Treatment] z_t; 
+      
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
+      
+      // Likelihood uncertainty
+      vector<lower=0>[n_Treatment] sigma; 
+    }
+
+    model{
+      // Hyperpriors
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
+      
+      // Priors
+      alpha ~ normal( log(1.07) , 1 );
+      to_vector(z_s) ~ normal( 0 , 1 );
+      to_vector(z_t) ~ normal( 0 , 1 );
+      sigma ~ exponential( 5 );
+      
+      // Convert z-scores
+      matrix[n_Season, n_Treatment] alpha_s;
+      matrix[n_Tank, n_Treatment] alpha_t;
+      
+      for (j in 1:n_Treatment) {
+        for (i in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[j] + 0;
+        }
+        for (i in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[j] + 0;
+        }
+      }
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Season[i] , Treatment[i] ] + 
+                     alpha_t[ Tank[i] , Treatment[i] ] );
+      }
+
+      // Gamma likelihood
+      // Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
+      for (i in 1:n) {
+        Concentration[i] ~ gamma( square( mu[i] ) / square( sigma[ Treatment[i] ] ) ,
+                                  mu[i] / square( sigma[ Treatment[i] ] ) );
+      }
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
     
     generated quantities{
       // Save converted z-scores
-      //vector[n_Experiment] alpha_e;
-      //alpha_e = z_e * sigma_e + 0;
-      vector[n_Tank] alpha_t;
-      alpha_t = z_t * sigma_t + 0;
+      matrix[n_Season, n_Treatment] alpha_s;
+      matrix[n_Tank, n_Treatment] alpha_t;
+      
+      for (j in 1:n_Treatment) {
+        for (i in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[j] + 0;
+        }
+        for (i in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[j] + 0;
+        }
       }
+    }
 "
 
-phenol_model <- phenol_stan %>%
+phenol_model_c <- phenol_stan_c %>%
   write_stan_file() %>%
   cmdstan_model()
 
-phenol_samples <- phenol_model$sample(
+phenol_model_nc <- phenol_stan_nc %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_samples_c <- phenol_model_c$sample(
           data = phenol %>%
-            select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
             unnest(cols = Samples_Data_Summary) %>%
             compose_data(),
           chains = 8,
           parallel_chains = parallel::detectCores(),
           iter_warmup = 1e4,
-          iter_sampling = 1e4
+          iter_sampling = 1e4,
+          # adapt_delta = 0.999, # force sampler to slow down
+          # max_treedepth = 15
         )
-# Some divergences despite non-centred parameterisation.
+
+phenol_samples_nc <- phenol_model_nc$sample(
+          data = phenol %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+          # adapt_delta = 0.999, # force sampler to slow down
+          # max_treedepth = 15
+        )
 
 # 4.5 Model checks ####
 # 4.5.1 Rhat ####
-phenol_samples$summary() %>%
+phenol_samples_c$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
 # No rhat above 1.001.
+
+phenol_samples_nc$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+
+# Plot comparison between centred and non-centred parameterisation.
+phenol_samples_nc$summary() %>%
+  left_join(phenol_samples_c$summary(),
+            by = "variable") %>%
+  rename(rhat_c = rhat.y, rhat_nc = rhat.x) %>%
+  ggplot(aes(rhat_c, rhat_nc)) +
+    geom_abline(slope = 1) +
+    geom_point() +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Warning because z-scores are dropped as they have no equivlent in
+# the centred parameteristion. Both models are comparable.
 
 # 4.5.2 Chains ####
 phenol_samples$draws(format = "df") %>%
@@ -1488,12 +1612,23 @@ phenol_samples$draws(format = "df") %>%
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
 
+# 4.5.3 Pairs ####
+phenol_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", "sigma[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_t[1,1]", "sigma_t[1]"))
+
+phenol_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]", "sigma[2]", 
+                      "alpha_s[1,2]", "sigma_s[2]",
+                      "alpha_t[1,2]", "sigma_t[2]"))
+
 # 4.6 Prior-posterior comparison ####
 # 4.6.1 Sample prior ####
 phenol_prior <- prior_samples(
   model = phenol_model,
   data = phenol %>%
-    select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
     unnest(cols = Samples_Data_Summary) %>%
     compose_data()
   )
@@ -1503,32 +1638,23 @@ phenol_prior %>%
   prior_posterior_draws(
     posterior_samples = phenol_samples,
     group = phenol %>%
-      select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
-      select(Urchin, Tank),
-    parameters = c("alpha_t[Tank]", 
-                   #"alpha_e[Experiment]", 
-                   "alpha_u[Urchin]", 
-                   "z_t[Tank]", 
-                   #"z_e[Experiment]",
-                   "sigma", 
-                   #"sigma_e", 
-                   "sigma_t"),
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Season, Treatment]", 
+                   "alpha_t[Tank, Treatment]", "z_s[Season, Treatment]", 
+                   "z_t[Tank, Treatment]", "sigma_s[Treatment]", "sigma_t[Treatment]", 
+                   "sigma[Treatment]"),
     format = "long"
     ) %T>%
-  { prior_posterior_plot(., group_name = "Urchin") %>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
       print() } %>%
-  # { prior_posterior_plot(., group_name = "Experiment") %>%
-  #     print() } %>%
   prior_posterior_plot(group_name = "Tank")
-# alpha_e shows a consitent shift below zero so seems to be compensating for
-# something. This is because of the imbalance between treatments in experiment 1.
-# Try modelling experimental and tank uncertainty within rather than across treatments.
-
-
-# This isn't necessarily concerning since all alphas will be added.
-# alpha_u is escaping the prior space for both groups, but that is part of the 
-# story, so is not concerning.
+# alpha_s and alpha_t are all clustered around zero, so are not absorbing anything
+# from alpha. The seasonal and inter-tank variability is much lower for faeces than
+# for kelp, so it is correct to stratify by treatment.
 
 # 4.7 Prediction ####
 # 4.7.1 Combine relevant priors and posteriors ####
@@ -1536,28 +1662,42 @@ phenol_prior_posterior <- phenol_prior %>%
   prior_posterior_draws(
     posterior_samples = phenol_samples,
     group = phenol %>%
-      select(Urchin, Experiment, Tank, Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
-      select(Urchin),
-    parameters = c("alpha_u[Urchin]", "sigma", "sigma_e", "sigma_t"),
+      select(Treatment),
+    parameters = c("alpha[Treatment]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma[Treatment]"),
     format = "short"
   )
 
 # 4.7.2 Calculate predictions for new experiments and tanks ####
 phenol_prior_posterior %<>%
-  mutate(mu = exp( alpha_u ),
-         obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ))
+  mutate(mu = exp( alpha ),
+         obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ),
+         mu_new = exp( alpha + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_t ) ),
+         obs_new = rgamma( n() , mu_new^2 / sigma^2 , mu_new / sigma^2 ))
 
 # 4.7.3 Plot predictions ####
 phenol_prior_posterior %>% # priors are identical for both treatments
-  filter(!(Urchin == "Faeces" & distribution == "prior")) %>% # remove one
-  mutate(Urchin = if_else(distribution == "prior",
-                          "Prior", Urchin) %>% fct()) %>%
+  filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
+  mutate(Treatment = if_else(distribution == "prior",
+                             "Prior", Treatment) %>% fct()) %>%
   select(-distribution) %>%
-  pivot_longer(cols = c(mu, obs), values_to = "Concentration", names_to = "Level") %>%
-  ggplot(aes(Concentration, Urchin, alpha = Level)) +
-    stat_slab(height = 10, n = 2e3) +
-    scale_alpha_manual(values = c(0.6, 0.3)) +
-    coord_cartesian(xlim = c(0, 2)) +
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Concentration", names_to = "Level") %>%
+  filter(!Level %in% c("obs", "obs_new")) %>%
+  ggplot(aes(Concentration, Treatment, alpha = Level)) +
+    # stat_slab(height = 2, linewidth = 0.5, colour = "black", n = 1e5, adjust = 20) +
+    ggridges::geom_density_ridges(from = 0, to = 2) +
+    # geom_density() +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 2), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
+
+
+
+
+
+
+
