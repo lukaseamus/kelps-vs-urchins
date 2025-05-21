@@ -1249,7 +1249,7 @@ phenol %<>%
 
 phenol$Samples_Data %>% 
   map(~ .x %>% filter(is.nan(Concentration)))
-# Very few NaNs produced (maximum 2 per sample). That's good enough.
+# Very few NaNs produced (at mots a few per sample). That's good enough.
 # Still enough samples and it adds further regularisation.
 
 # Remove NaNs.
@@ -1371,7 +1371,7 @@ phenol %>%
 # expectation is that the mean for both treatments must fall near 1.07%.
 
 tibble(n = 1:1e5,
-       mu_log = rnorm( 1e5 , log(1.07) , 1 ),
+       mu_log = rnorm( 1e5 , log(1.07) , 0.2 ),
        sigma = rexp( 1e5, 5 ),
        mu = exp(mu_log),
        P = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
@@ -1386,7 +1386,7 @@ tibble(n = 1:1e5,
     theme(panel.grid = element_blank())
 # Looks reasonable.
 
-# 4.4 Stan model ####
+# 4.4 Stan models ####
 # Typically non-centred parameterisation works better but I read that when the 
 # data are strong, as is arguably the case here, centred parameterisation can
 # perform better (https://betanalpha.github.io/assets/case_studies/hierarchical
@@ -1410,15 +1410,15 @@ phenol_stan_c <- "
       
       // Intercepts in log space
       vector[n_Treatment] alpha; 
-      matrix[n_Season, n_Treatment] alpha_s;
-      matrix[n_Tank, n_Treatment] alpha_t; 
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t; 
       
       // Seasonal and inter-tank variability
       vector<lower=0>[n_Treatment] sigma_s;
       vector<lower=0>[n_Treatment] sigma_t;
       
       // Likelihood uncertainty
-      vector<lower=0>[n_Treatment] sigma; 
+      real<lower=0> sigma; 
     }
 
     model{
@@ -1427,10 +1427,10 @@ phenol_stan_c <- "
       sigma_t ~ exponential( 5 );
       
       // Priors
-      alpha ~ normal( log(1.07) , 1 );
+      alpha ~ normal( log(1.07) , 0.2 );
       for (i in 1:n_Treatment) {
-        alpha_s[,i] ~ normal( 0 , sigma_s[i] );
-        alpha_t[,i] ~ normal( 0 , sigma_t[i] );
+        alpha_s[i,] ~ normal( 0 , sigma_s[i] );
+        alpha_t[i,] ~ normal( 0 , sigma_t[i] );
       }
       sigma ~ exponential( 5 );
       
@@ -1438,16 +1438,13 @@ phenol_stan_c <- "
       vector[n] mu;
       for ( i in 1:n ) {
         mu[i] = exp( alpha[ Treatment[i] ] + 
-                     alpha_s[ Season[i] , Treatment[i] ] + 
-                     alpha_t[ Tank[i] , Treatment[i] ] );
+                     alpha_s[ Treatment[i] , Season[i] ] + 
+                     alpha_t[ Treatment[i] , Tank[i] ] );
       }
 
       // Gamma likelihood
-      // Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
-      for (i in 1:n) {
-        Concentration[i] ~ gamma( square( mu[i] ) / square( sigma[ Treatment[i] ] ) ,
-                                  mu[i] / square( sigma[ Treatment[i] ] ) );
-      }
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
       
       // Normal measurement error
       Concentration_mean ~ normal( Concentration , Concentration_sd );
@@ -1473,15 +1470,15 @@ phenol_stan_nc <- "
       
       // Intercepts in log space
       vector[n_Treatment] alpha; 
-      matrix[n_Season, n_Treatment] z_s; // z-scores
-      matrix[n_Tank, n_Treatment] z_t; 
+      matrix[n_Treatment, n_Season] z_s; // z-scores
+      matrix[n_Treatment, n_Tank] z_t; 
       
       // Seasonal and inter-tank variability
       vector<lower=0>[n_Treatment] sigma_s;
       vector<lower=0>[n_Treatment] sigma_t;
       
       // Likelihood uncertainty
-      vector<lower=0>[n_Treatment] sigma; 
+      real<lower=0> sigma; 
     }
 
     model{
@@ -1490,21 +1487,21 @@ phenol_stan_nc <- "
       sigma_t ~ exponential( 5 );
       
       // Priors
-      alpha ~ normal( log(1.07) , 1 );
+      alpha ~ normal( log(1.07) , 0.2 );
       to_vector(z_s) ~ normal( 0 , 1 );
       to_vector(z_t) ~ normal( 0 , 1 );
       sigma ~ exponential( 5 );
       
       // Convert z-scores
-      matrix[n_Season, n_Treatment] alpha_s;
-      matrix[n_Tank, n_Treatment] alpha_t;
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
       
-      for (j in 1:n_Treatment) {
-        for (i in 1:n_Season) {
-          alpha_s[i, j] = z_s[i, j] * sigma_s[j] + 0;
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
         }
-        for (i in 1:n_Tank) {
-          alpha_t[i, j] = z_t[i, j] * sigma_t[j] + 0;
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[i] + 0;
         }
       }
       
@@ -1512,16 +1509,13 @@ phenol_stan_nc <- "
       vector[n] mu;
       for ( i in 1:n ) {
         mu[i] = exp( alpha[ Treatment[i] ] + 
-                     alpha_s[ Season[i] , Treatment[i] ] + 
-                     alpha_t[ Tank[i] , Treatment[i] ] );
+                     alpha_s[ Treatment[i] , Season[i] ] + 
+                     alpha_t[ Treatment[i] , Tank[i] ] );
       }
 
       // Gamma likelihood
-      // Concentration ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
-      for (i in 1:n) {
-        Concentration[i] ~ gamma( square( mu[i] ) / square( sigma[ Treatment[i] ] ) ,
-                                  mu[i] / square( sigma[ Treatment[i] ] ) );
-      }
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
       
       // Normal measurement error
       Concentration_mean ~ normal( Concentration , Concentration_sd );
@@ -1529,15 +1523,15 @@ phenol_stan_nc <- "
     
     generated quantities{
       // Save converted z-scores
-      matrix[n_Season, n_Treatment] alpha_s;
-      matrix[n_Tank, n_Treatment] alpha_t;
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
       
-      for (j in 1:n_Treatment) {
-        for (i in 1:n_Season) {
-          alpha_s[i, j] = z_s[i, j] * sigma_s[j] + 0;
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
         }
-        for (i in 1:n_Tank) {
-          alpha_t[i, j] = z_t[i, j] * sigma_t[j] + 0;
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[i] + 0;
         }
       }
     }
@@ -1560,8 +1554,6 @@ phenol_samples_c <- phenol_model_c$sample(
           parallel_chains = parallel::detectCores(),
           iter_warmup = 1e4,
           iter_sampling = 1e4,
-          # adapt_delta = 0.999, # force sampler to slow down
-          # max_treedepth = 15
         )
 
 phenol_samples_nc <- phenol_model_nc$sample(
@@ -1573,8 +1565,6 @@ phenol_samples_nc <- phenol_model_nc$sample(
           parallel_chains = parallel::detectCores(),
           iter_warmup = 1e4,
           iter_sampling = 1e4,
-          # adapt_delta = 0.999, # force sampler to slow down
-          # max_treedepth = 15
         )
 
 # 4.5 Model checks ####
@@ -1584,67 +1574,441 @@ phenol_samples_c$summary() %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# No rhat above 1.001.
+# Some rhat above 1.001.
 
 phenol_samples_nc$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
+# No rhat above 1.001.
 
 # Plot comparison between centred and non-centred parameterisation.
 phenol_samples_nc$summary() %>%
   left_join(phenol_samples_c$summary(),
             by = "variable") %>%
-  rename(rhat_c = rhat.y, rhat_nc = rhat.x) %>%
+  rename(rhat_nc = rhat.x, rhat_c = rhat.y) %>%
   ggplot(aes(rhat_c, rhat_nc)) +
     geom_abline(slope = 1) +
     geom_point() +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# Warning because z-scores are dropped as they have no equivlent in
-# the centred parameteristion. Both models are comparable.
+# Warning because z-scores are dropped as they have no equivalent in
+# the centred parameteristion. The non-centred model is better.
 
 # 4.5.2 Chains ####
-phenol_samples$draws(format = "df") %>%
+phenol_samples_c$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "Phenol_Chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "Phenol_Chains_c.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
+# Chains look ok.
+
+phenol_samples_nc$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains_nc.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look good.
 
 # 4.5.3 Pairs ####
-phenol_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha[1]", "sigma[1]", 
+phenol_samples_c$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
-                      "alpha_t[1,1]", "sigma_t[1]"))
+                      "alpha_t[1,1]", "sigma_t[1]", 
+                      "sigma"))
+# Correlation between alpha and alpha_s for Treatment 1 (Faeces).
+# alpha_s is being pulled far away from its zero mean and there is
+# a strong inflation of sigma_s.
 
-phenol_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha[2]", "sigma[2]", 
-                      "alpha_s[1,2]", "sigma_s[2]",
-                      "alpha_t[1,2]", "sigma_t[2]"))
+phenol_samples_c$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]",
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]",
+                      "sigma"))
+# Correlation is reduced for Treatment 2 (Kelp). This means alpha_s is
+# absorbing some of the Treatment effect of alpha, but mostly for Faeces,
+# most likely because the alpha prior is fairly constrained and way above 
+# the alpha posterior for Faeces suggested by the data. Since the prior 
+# for alpha_s is set on zero but not fixed, it has scope to buffer alpha.
+# sigma_s is also inflated as a result, because it still expects the
+# mean of all alpha_s to be zero, so a move away from zero translates to
+# greater variability, even if the true seasonal variability is low.
+
+phenol_samples_nc$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_t[1,1]", "sigma_t[1]",
+                      "sigma"))
+
+phenol_samples_nc$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]",
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]",
+                      "sigma"))
+# Same as above.
 
 # 4.6 Prior-posterior comparison ####
-# 4.6.1 Sample prior ####
-phenol_prior <- prior_samples(
-  model = phenol_model,
+# 4.6.1 Sample priors ####
+phenol_prior_c <- prior_samples(
+  model = phenol_model_c,
   data = phenol %>%
     select(Treatment, Season, Tank, Samples_Data_Summary) %>%
     unnest(cols = Samples_Data_Summary) %>%
     compose_data()
   )
 
+phenol_prior_nc <- prior_samples(
+  model = phenol_model_nc,
+  data = phenol %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+)
+
 # 4.6.2 Plot prior-posterior comparison ####
-phenol_prior %>% 
+phenol_prior_c %>% 
   prior_posterior_draws(
-    posterior_samples = phenol_samples,
+    posterior_samples = phenol_samples_c,
     group = phenol %>%
       select(Treatment, Season, Tank, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
       select(Treatment, Season, Tank),
-    parameters = c("alpha[Treatment]", "alpha_s[Season, Treatment]", 
-                   "alpha_t[Tank, Treatment]", "z_s[Season, Treatment]", 
-                   "z_t[Tank, Treatment]", "sigma_s[Treatment]", "sigma_t[Treatment]", 
-                   "sigma[Treatment]"),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_t[Treatment, Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+# alpha_t are all clustered around zero, so are not absorbing anything, but alpha_s
+# is clearly absorbing from alpha for Faeces.
+
+phenol_prior_nc %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples_nc,
+    group = phenol %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_t[Treatment, Tank]", "z_s[Treatment, Season]", 
+                   "z_t[Treatment, Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+# Same as above.
+
+# 4.7 Stan models ####
+# One way to get around alpha_s absorbing some of alpha is to relax the prior
+# on alpha. Let's try the same models with wide priors to see this effect.
+
+phenol_stan_c_w <- "
+    data{ 
+      int n;
+      vector[n] Concentration_mean;
+      vector[n] Concentration_sd;
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
+      int n_Tank;
+    }
+
+    parameters{
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Treatment] alpha; 
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t; 
+      
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
+      
+      // Likelihood uncertainty
+      real<lower=0> sigma; 
+    }
+
+    model{
+      // Hyperpriors
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
+      
+      // Priors
+      alpha ~ normal( log(1.07) , 1 );
+      for (i in 1:n_Treatment) {
+        alpha_s[i,] ~ normal( 0 , sigma_s[i] );
+        alpha_t[i,] ~ normal( 0 , sigma_t[i] );
+      }
+      sigma ~ exponential( 5 );
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Treatment[i] , Season[i] ] + 
+                     alpha_t[ Treatment[i] , Tank[i] ] );
+      }
+
+      // Gamma likelihood
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
+"
+
+phenol_stan_nc_w <- "
+    data{ 
+      int n;
+      vector[n] Concentration_mean;
+      vector[n] Concentration_sd;
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
+      int n_Tank;
+    }
+
+    parameters{
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Treatment] alpha; 
+      matrix[n_Treatment, n_Season] z_s; // z-scores
+      matrix[n_Treatment, n_Tank] z_t; 
+      
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
+      
+      // Likelihood uncertainty
+      real<lower=0> sigma; 
+    }
+
+    model{
+      // Hyperpriors
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
+      
+      // Priors
+      alpha ~ normal( log(1.07) , 1 );
+      to_vector(z_s) ~ normal( 0 , 1 );
+      to_vector(z_t) ~ normal( 0 , 1 );
+      sigma ~ exponential( 5 );
+      
+      // Convert z-scores
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
+      
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
+        }
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[i] + 0;
+        }
+      }
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Treatment[i] , Season[i] ] + 
+                     alpha_t[ Treatment[i] , Tank[i] ] );
+      }
+
+      // Gamma likelihood
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
+    
+    generated quantities{
+      // Save converted z-scores
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
+      
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
+        }
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i, j] * sigma_t[i] + 0;
+        }
+      }
+    }
+"
+
+phenol_model_c_w <- phenol_stan_c_w %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_model_nc_w <- phenol_stan_nc_w %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_samples_c_w <- phenol_model_c_w$sample(
+          data = phenol %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+
+phenol_samples_nc_w <- phenol_model_nc_w$sample(
+          data = phenol %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+
+# 4.8 Model checks ####
+# 4.8.1 Rhat ####
+phenol_samples_c_w$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# Some rhat above 1.001.
+
+phenol_samples_nc_w$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# No rhat above 1.001.
+
+# Plot comparison between centred and non-centred parameterisation.
+phenol_samples_nc_w$summary() %>%
+  left_join(phenol_samples_c_w$summary(),
+            by = "variable") %>%
+  rename(rhat_nc_w = rhat.x, rhat_c_w = rhat.y) %>%
+  ggplot(aes(rhat_c_w, rhat_nc_w)) +
+    geom_abline(slope = 1) +
+    geom_point() +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Warning because z-scores are dropped as they have no equivlent in the
+# centred parameteristion. The non-centred model is better.
+
+# 4.8.2 Chains ####
+phenol_samples_c_w$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains_c_w.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look worse.
+
+phenol_samples_nc_w$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains_nc_w.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look similar.
+
+# 4.8.3 Pairs ####
+phenol_samples_c_w$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_t[1,1]", "sigma_t[1]", 
+                      "sigma"))
+# Still that correlation between alpha and alpha_s, although less
+# and alpha_s is now centred on zero. So the outcome is better but 
+# the sampling is still ineffecient due to non-identifiability.
+
+phenol_samples_c_w$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]", 
+                      "sigma"))
+# Interestingly correlation shows up for Kelp to a similar extent.
+
+phenol_samples_nc_w$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_t[1,1]", "sigma_t[1]",
+                      "sigma"))
+
+phenol_samples_nc_w$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]",
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]", 
+                      "sigma"))
+# Similar to above.
+
+# 4.9 Prior-posterior comparison ####
+# 4.9.1 Sample priors ####
+phenol_prior_c_w <- prior_samples(
+  model = phenol_model_c_w,
+  data = phenol %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+  )
+
+phenol_prior_nc_w <- prior_samples(
+  model = phenol_model_nc_w,
+  data = phenol %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+)
+
+# 4.9.2 Plot prior-posterior comparison ####
+phenol_prior_c_w %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples_c_w,
+    group = phenol %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_t[Treatment, Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+
+phenol_prior_nc_w %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples_nc_w,
+    group = phenol %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_t[Treatment, Tank]", "z_s[Treatment, Season]", 
+                   "z_t[Treatment, Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment") %>%
@@ -1653,51 +2017,450 @@ phenol_prior %>%
       print() } %>%
   prior_posterior_plot(group_name = "Tank")
 # alpha_s and alpha_t are all clustered around zero, so are not absorbing anything
-# from alpha. The seasonal and inter-tank variability is much lower for faeces than
-# for kelp, so it is correct to stratify by treatment.
+# from alpha. Consequently sigma_s for Faeces is now more reasonable. The posterior 
+# for alpha for Faeces is also much more realistic given the data.
 
-# 4.7 Prediction ####
-# 4.7.1 Combine relevant priors and posteriors ####
-phenol_prior_posterior <- phenol_prior %>% 
+# 4.10 Stan models ####
+# Ideally I want to keep the strong prior on alpha, which is suggested by the literature.
+# I also want to get rid of the non-identifiability between alpha and alpha_s or alpha_t.
+# Let's try sum-to-zero parameters for alpha_s and alpha_t with the original alpha prior.
+
+phenol_stan_c_stz <- "
+    data{ 
+      int n;
+      vector[n] Concentration_mean;
+      vector[n] Concentration_sd;
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
+      int n_Tank;
+    }
+
+    parameters{
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Treatment] alpha; 
+      array[n_Treatment] sum_to_zero_vector[n_Season] alpha_s;
+      array[n_Treatment] sum_to_zero_vector[n_Tank] alpha_t; 
+      
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
+      
+      // Likelihood uncertainty
+      real<lower=0> sigma; 
+    }
+
+    model{
+      // Hyperpriors
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
+      
+      // Priors
+      alpha ~ normal( log(1.07) , 0.2 );
+      for (i in 1:n_Treatment) {
+        alpha_s[i][] ~ normal( 0 , sigma_s[i] * sqrt( n_Season * inv( n_Season - 1 ) ) );
+        alpha_t[i][] ~ normal( 0 , sigma_t[i] * sqrt( n_Tank * inv( n_Tank - 1 ) ) );
+      }
+      sigma ~ exponential( 5 );
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Treatment[i] ][ Season[i] ] + 
+                     alpha_t[ Treatment[i] ][ Tank[i] ] );
+      }
+
+      // Gamma likelihood
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
+"
+
+phenol_stan_nc_stz <- "
+    data{ 
+      int n;
+      vector[n] Concentration_mean;
+      vector[n] Concentration_sd;
+      array[n] int Treatment;
+      int n_Treatment;
+      array[n] int Season;
+      int n_Season;
+      array[n] int Tank;
+      int n_Tank;
+    }
+
+    parameters{
+      // True estimates for measurement error
+      vector<lower=0>[n] Concentration; 
+      
+      // Intercepts in log space
+      vector[n_Treatment] alpha; 
+      array[n_Treatment] sum_to_zero_vector[n_Season] z_s;
+      array[n_Treatment] sum_to_zero_vector[n_Tank] z_t;
+      
+      // Seasonal and inter-tank variability
+      vector<lower=0>[n_Treatment] sigma_s;
+      vector<lower=0>[n_Treatment] sigma_t;
+      
+      // Likelihood uncertainty
+      real<lower=0> sigma; 
+    }
+
+    model{
+      // Hyperpriors
+      sigma_s ~ exponential( 5 );
+      sigma_t ~ exponential( 5 );
+      
+      // Priors
+      alpha ~ normal( log(1.07) , 0.2 );
+      for (i in 1:n_Treatment) {
+        z_s[i][] ~ normal( 0 , 1 );
+        z_t[i][] ~ normal( 0 , 1 );
+      }
+      sigma ~ exponential( 5 );
+      
+      // Convert z-scores
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
+      
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i][j] * sqrt( n_Season * inv( n_Season - 1 ) ) * sigma_s[i] + 0;
+        }
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i][j] * sqrt( n_Tank * inv( n_Tank - 1 ) ) * sigma_t[i] + 0;
+        }
+      }
+      
+      // Model with link function
+      vector[n] mu;
+      for ( i in 1:n ) {
+        mu[i] = exp( alpha[ Treatment[i] ] + 
+                     alpha_s[ Treatment[i] , Season[i] ] + 
+                     alpha_t[ Treatment[i] , Tank[i] ] );
+      }
+
+      // Gamma likelihood
+      Concentration ~ gamma( square( mu ) / square( sigma ) ,
+                             mu / square( sigma ) );
+      
+      // Normal measurement error
+      Concentration_mean ~ normal( Concentration , Concentration_sd );
+    }
+    
+    generated quantities{
+      // Save converted z-scores
+      matrix[n_Treatment, n_Season] alpha_s;
+      matrix[n_Treatment, n_Tank] alpha_t;
+      
+      for (i in 1:n_Treatment) {
+        for (j in 1:n_Season) {
+          alpha_s[i, j] = z_s[i][j] * sqrt( n_Season * inv( n_Season - 1 ) ) * sigma_s[i] + 0;
+        }
+        for (j in 1:n_Tank) {
+          alpha_t[i, j] = z_t[i][j] * sqrt( n_Tank * inv( n_Tank - 1 ) ) * sigma_t[i] + 0;
+        }
+      }
+    }
+"
+
+phenol_model_c_stz <- phenol_stan_c_stz %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_model_nc_stz <- phenol_stan_nc_stz %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+phenol_samples_c_stz <- phenol_model_c_stz$sample(
+          data = phenol %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+# Samples very slowly.
+
+phenol_samples_nc_stz <- phenol_model_nc_stz$sample(
+          data = phenol %>%
+            select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+# Samples very fast.
+
+# 4.11 Model checks ####
+# 4.11.1 Rhat ####
+phenol_samples_c_stz$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# All rhat above 1.001. Terrible average rhat.
+
+phenol_samples_nc_stz$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# No rhat above 1.001.
+
+# Plot comparison between centred and non-centred parameterisation.
+phenol_samples_nc_stz$summary() %>%
+  left_join(phenol_samples_c_stz$summary(),
+            by = "variable") %>%
+  rename(rhat_nc_stz = rhat.x, rhat_c_stz = rhat.y) %>%
+  ggplot(aes(rhat_c_stz, rhat_nc_stz)) +
+    geom_abline(slope = 1) +
+    geom_point() +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Warning because z-scores are dropped as they have no equivalent in
+# the centred parameteristion. The non-centred model is much better.
+
+# 4.11.2 Chains ####
+phenol_samples_c_stz$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains_c_stz.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Worst chains yet.
+
+phenol_samples_nc_stz$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "Phenol_Chains_nc_stz.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Phenol", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Great chains.
+
+# 4.11.3 Pairs ####
+phenol_samples_c_stz$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]", # note that counterintuitively
+                      "alpha_s[1,1]", "sigma_s[1]", # matrix indexing must be used
+                      "alpha_t[1,1]", "sigma_t[1]", # for arrays of vectors
+                      "sigma"))
+# Very poor posteriors. Bad funnels. Correlation between alpha and sigma.
+
+phenol_samples_c_stz$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]", 
+                      "sigma"))
+
+phenol_samples_nc_stz$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[1]",
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_t[1,1]", "sigma_t[1]", 
+                      "sigma"))
+
+phenol_samples_nc_stz$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_t[2,1]", "sigma_t[2]", 
+                      "sigma"))
+# Best posteriors so far. Has correlation between alpha and sigma for
+# Treatment 1 (Faeces) but not for Treatment 2 (Kelp) so sigma is 
+# identified.
+
+# 4.12 Prior-posterior comparison ####
+# 4.12.1 Sample prior ####
+phenol_prior_c_stz <- prior_samples(
+  model = phenol_model_c_stz,
+  data = phenol %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+  )
+
+phenol_prior_nc_stz <- prior_samples(
+  model = phenol_model_nc_stz,
+  data = phenol %>%
+    select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    compose_data()
+)
+
+# 4.12.2 Plot prior-posterior comparison ####
+phenol_prior_c_stz %>% 
   prior_posterior_draws(
-    posterior_samples = phenol_samples,
+    posterior_samples = phenol_samples_c_stz,
+    group = phenol %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment][Season]", 
+                   "alpha_t[Treatment][Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
+    format = "long"
+  ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+# Can't even see what's going on, posteriors are so poor.
+
+phenol_prior_nc_stz %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples_nc_stz,
+    group = phenol %>%
+      select(Treatment, Season, Tank, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Tank),
+    parameters = c("alpha[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_t[Treatment, Tank]", "z_s[Treatment][Season]", 
+                   "z_t[Treatment][Tank]", "sigma_s[Treatment]", 
+                   "sigma_t[Treatment]", "sigma"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment") %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season") %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Tank")
+# Looks optimal.
+
+# 4.13 Prediction ####
+# 4.13.1 Combine relevant priors and posteriors ####
+phenol_prior_posterior <- phenol_prior_nc_stz %>% 
+  prior_posterior_draws(
+    posterior_samples = phenol_samples_nc_stz,
     group = phenol %>%
       select(Treatment, Season, Tank, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
       select(Treatment),
     parameters = c("alpha[Treatment]", "sigma_s[Treatment]", 
-                   "sigma_t[Treatment]", "sigma[Treatment]"),
+                   "sigma_t[Treatment]", "sigma"),
     format = "short"
   )
 
-# 4.7.2 Calculate predictions for new experiments and tanks ####
+# 4.13.2 Calculate predictions for new experiments and tanks ####
 phenol_prior_posterior %<>%
   mutate(mu = exp( alpha ),
          obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ),
          mu_new = exp( alpha + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_t ) ),
          obs_new = rgamma( n() , mu_new^2 / sigma^2 , mu_new / sigma^2 ))
 
-# 4.7.3 Plot predictions ####
-phenol_prior_posterior %>% # priors are identical for both treatments
+# 4.13.3 Remove redundant prior ####
+phenol_prior_posterior %<>% # priors are identical for both treatments ->
   filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
-  mutate(Treatment = if_else(distribution == "prior",
+  mutate(Treatment = if_else(distribution == "prior", # add Prior to treatment
                              "Prior", Treatment) %>% fct()) %>%
-  select(-distribution) %>%
+  select(-distribution)
+
+# 4.13.3 Plot predictions ####
+phenol_prior_posterior %>%
   pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
                values_to = "Concentration", names_to = "Level") %>%
-  filter(!Level %in% c("obs", "obs_new")) %>%
+  filter(Level %in% c("mu_new", "obs_new")) %>%
   ggplot(aes(Concentration, Treatment, alpha = Level)) +
-    # stat_slab(height = 2, linewidth = 0.5, colour = "black", n = 1e5, adjust = 20) +
     ggridges::geom_density_ridges(from = 0, to = 2) +
-    # geom_density() +
     scale_alpha_manual(values = c(0.8, 0.2)) +
     scale_x_continuous(limits = c(0, 2), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
+# For gamma, observations definitely are more informative than the mean.
+
+# 4.13.4 Calculate difference ####
+phenol_diff <- phenol_prior_posterior %>%
+  filter(Treatment != "Prior") %>%
+  droplevels() %>%
+  select(-c(alpha, sigma_s, sigma_t, sigma)) %>%
+  pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
+  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
+         obs = obs_Kelp - obs_Faeces,
+         mu_new = mu_new_Kelp - mu_new_Faeces,
+         obs_new = obs_new_Kelp - obs_new_Faeces) %>%
+  select(.chain, .iteration, .draw, mu, obs, mu_new, obs_new) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = "Parameter",
+               values_to = "Difference")
+
+# 4.13.5 Plot difference ####
+phenol_diff %>%
+  ggplot(aes(Difference, Parameter)) +
+    ggridges::geom_density_ridges(from = -1, to = 2) +
+    geom_vline(xintercept = 0) +
+    scale_x_continuous(limits = c(-1, 2), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+# 4.13.6 Summarise difference ####
+phenol_diff %>%
+  group_by(Parameter) %>%
+  summarise(mean = mean(Difference),
+            sd = sd(Difference),
+            P = mean(Difference > 0),
+            n = length(Difference))
+
+# 4.14 Visualisation ####
+# 4.14.1 Calculate observational densities ####
+ID_dens <- phenol %>%
+  select(Treatment, Season, Tank, ID, Samples_Data) %>%
+  unnest(cols = Samples_Data) %>%
+  group_by(Treatment, ID) %>%
+  reframe(x = density(Concentration, n = 1e3, from = -0.1, to = 3)$x, # computation range is limited and
+          y = density(Concentration, n = 1e3, from = -0.1, to = 3)$y) # n is increased to improve KDE
+
+# 4.14.2 Calculate prediction densities ####
+pred_dens <- phenol_prior_posterior %>%
+  group_by(Treatment) %>%
+  reframe(x = density(obs_new, n = 1e3, from = -0.1, to = 3)$x,
+          y = density(obs_new, n = 1e3, from = -0.1, to = 3)$y)
+
+diff_dens <- phenol_diff %>%
+  filter(Parameter == "obs_new") %>%
+  reframe(x = density(Difference, n = 1e3, from = -0.1, to = 3)$x,
+          y = density(Difference, n = 1e3, from = -0.1, to = 3)$y)
+
+# 4.14.3 Manipulate densities ####
+# Rescale
+ID_dens %<>%
+  group_by(ID) %>%
+  mutate(y_area = y * 0.001 / ( sum(y) * ( x[2] - x[1] ) ), # Riemann sum
+         y_height = y * 0.05 / max(y)) %>%
+  ungroup()
+
+# Trim
+ID_dens %<>%
+  filter(y > 0.01)
+
+# Mirror
+ID_dens %<>%
+  group_by(Treatment, ID) %>%
+  reframe(x = c(x, x %>% rev()),
+          y = c(y, -y %>% rev()),
+          y_area = c(y_area, -y_area %>% rev()),
+          y_height = c(y_height, -y_height %>% rev())) %>%
+  ungroup()
+
+# 4.14.4 Plot ####
+ggplot() +
+  geom_polygon(data = ID_dens %>% # Stratify by Treatment
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 1, 2)) %>%
+                 group_by(ID) %>% # Jitter
+                 mutate(y_area = y_area + runif( 1 , -0.1 , 0.1 )),
+               aes(x = x, y = y_area, group = ID, fill = Treatment), alpha = 0.2) +
+  theme_minimal()
 
 
 
 
 
-
-
+# 4.14.4 Save ####
