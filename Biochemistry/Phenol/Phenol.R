@@ -2365,12 +2365,13 @@ phenol_prior_posterior %<>% # priors are identical for both treatments ->
   select(-distribution)
 
 # 4.13.3 Plot predictions ####
+require(ggridges) # ggridges is better than ggdist for limiting distribution ranges
 phenol_prior_posterior %>%
   pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
                values_to = "Concentration", names_to = "Level") %>%
   filter(Level %in% c("mu_new", "obs_new")) %>%
   ggplot(aes(Concentration, Treatment, alpha = Level)) +
-    ggridges::geom_density_ridges(from = 0, to = 2) +
+    geom_density_ridges(from = 0, to = 2) +
     scale_alpha_manual(values = c(0.8, 0.2)) +
     scale_x_continuous(limits = c(0, 2), oob = scales::oob_keep) +
     theme_minimal() +
@@ -2410,7 +2411,7 @@ phenol_diff %>%
             n = length(Difference))
 
 # 4.14 Visualisation ####
-# 4.14.1 Calculate observational densities ####
+# 4.14.1 Calculate densities ####
 ID_dens <- phenol %>%
   select(Treatment, Season, Tank, ID, Samples_Data) %>%
   unnest(cols = Samples_Data) %>%
@@ -2418,28 +2419,28 @@ ID_dens <- phenol %>%
   reframe(x = density(Concentration, n = 1e3, from = -0.1, to = 3)$x, # computation range is limited and
           y = density(Concentration, n = 1e3, from = -0.1, to = 3)$y) # n is increased to improve KDE
 
-# 4.14.2 Calculate prediction densities ####
-pred_dens <- phenol_prior_posterior %>%
-  group_by(Treatment) %>%
-  reframe(x = density(obs_new, n = 1e3, from = -0.1, to = 3)$x,
-          y = density(obs_new, n = 1e3, from = -0.1, to = 3)$y)
+# pred_dens <- phenol_prior_posterior %>%
+#   group_by(Treatment) %>%
+#   reframe(x = c(0, density(obs_new, n = 1e3, from = 0, to = 3)$x),
+#           y = c(0, density(obs_new, n = 1e3, from = 0, to = 3)$y)) %>%
+#   mutate(y_area = y * 1 / ( sum(y) * ( x[3] - x[2] ) ), # Riemann sum
+#          y_height = y * 1 / max(y))
+# 
+# diff_dens <- phenol_diff %>%
+#   filter(Parameter == "obs_new") %>%
+#   reframe(x = density(Difference, n = 1e3, from = -2, to = 3)$x,
+#           y = density(Difference, n = 1e3, from = -2, to = 3)$y)
 
-diff_dens <- phenol_diff %>%
-  filter(Parameter == "obs_new") %>%
-  reframe(x = density(Difference, n = 1e3, from = -0.1, to = 3)$x,
-          y = density(Difference, n = 1e3, from = -0.1, to = 3)$y)
-
-# 4.14.3 Manipulate densities ####
+# 4.14.2 Manipulate densities ####
 # Rescale
 ID_dens %<>%
   group_by(ID) %>%
-  mutate(y_area = y * 0.001 / ( sum(y) * ( x[2] - x[1] ) ), # Riemann sum
+  mutate(y_area = y * 0.005 / ( sum(y) * ( x[2] - x[1] ) ), # Riemann sum
          y_height = y * 0.05 / max(y)) %>%
   ungroup()
 
 # Trim
-ID_dens %<>%
-  filter(y > 0.01)
+ID_dens %<>% filter(y > 0.1)
 
 # Mirror
 ID_dens %<>%
@@ -2450,17 +2451,88 @@ ID_dens %<>%
           y_height = c(y_height, -y_height %>% rev())) %>%
   ungroup()
 
-# 4.14.4 Plot ####
-ggplot() +
+
+# 4.14.3 Plot ####
+# Define custom theme
+mytheme <- theme(panel.background = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 axis.line = element_line(),
+                 axis.title = element_text(size = 12, hjust = 0),
+                 axis.text = element_text(size = 10, colour = "black"),
+                 axis.ticks.length = unit(.25, "cm"),
+                 axis.ticks = element_line(colour = "black", lineend = "square"),
+                 axis.title.y = element_blank(),
+                 axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(),
+                 axis.line.y = element_blank(),
+                 legend.key = element_blank(),
+                 legend.key.width = unit(.25, "cm"),
+                 legend.key.height = unit(.45, "cm"),
+                 legend.key.spacing.x = unit(.5, "cm"),
+                 legend.key.spacing.y = unit(.05, "cm"),
+                 legend.background = element_blank(),
+                 legend.position = "top",
+                 legend.justification = 0,
+                 legend.text = element_text(size = 12, hjust = 0),
+                 legend.title = element_blank(),
+                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
+                 strip.background = element_blank(),
+                 strip.text = element_text(size = 12, hjust = 0),
+                 panel.spacing = unit(0.6, "cm"),
+                 text = element_text(family = "Futura"))
+
+Fig_2b_top <- ggplot() +
   geom_polygon(data = ID_dens %>% # Stratify by Treatment
-                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 1, 2)) %>%
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.6, 1.6)) %>%
                  group_by(ID) %>% # Jitter
-                 mutate(y_area = y_area + runif( 1 , -0.1 , 0.1 )),
-               aes(x = x, y = y_area, group = ID, fill = Treatment), alpha = 0.2) +
-  theme_minimal()
+                 mutate(y_area = y_area + runif( 1 , -0.3 , 0.3 )),
+               aes(x = x, y = y_area, group = ID, 
+                   fill = Treatment), 
+               alpha = 0.2) +
+  geom_density_ridges(data = phenol_prior_posterior %>%
+                        mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
+                      aes(x = obs_new, y = Treatment %>% as.numeric(), 
+                          fill = Treatment), colour = NA,
+                      from = 0, to = 3, rel_min_height = 0.003, 
+                      bandwidth = 0.05, scale = 3, alpha = 0.6) +
+  scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
+  scale_fill_manual(values = c("#7030a5", "#c3b300", "grey"),
+                    guide = guide_legend(reverse = TRUE)) +
+  xlab("Phenolic content (%)") +
+  coord_cartesian(expand = FALSE, clip = "off") +
+  mytheme
 
+Fig_2b_bottom <- ggplot() +
+  geom_density_ridges_gradient(data = phenol_diff %>% 
+                        filter(Parameter == "obs_new"),
+                      aes(x = Difference, y = 0, 
+                          fill = if_else(after_stat(x) < 0,
+                                         "Faeces", "Kelp")),
+                      colour = NA, linewidth = 0, bandwidth = 0.06,
+                      from = -3, to = 3, rel_min_height = 0.003) +
+  geom_vline(xintercept = 0) +
+  scale_x_continuous(limits = c(-3, 3), oob = scales::oob_keep,
+                     breaks = seq(-3, 3, 1.5),
+                     labels = scales::label_number(style_negative = "minus",
+                                                   accuracy = c(1, 0.1, 1, 0.1, 1))) +
+  scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
+                    guide = "none") +
+  xlab("Difference (%)") +
+  coord_cartesian(expand = FALSE, clip = "off") +
+  mytheme
 
+require(patchwork)
+Fig_2b <- ( Fig_2b_top / Fig_2b_bottom ) +
+  plot_layout(heights = c(1, 0.3333333))
 
+Fig_2b %>%
+  ggsave(filename = "Phenol.pdf", device = cairo_pdf, path = "Figures", 
+         height = 12, width = 12, units = "cm")
 
-
-# 4.14.4 Save ####
+# 4.14.4 Save relevant data ####
+ID_dens %>% write_rds(here("Biochemistry", "Phenol", "ID_dens.rds"))
+phenol_prior_posterior %>% write_rds(here("Biochemistry", "Phenol", "phenol_prior_posterior.rds"))
+phenol_diff %>% write_rds(here("Biochemistry", "Phenol", "phenol_diff.rds"))
