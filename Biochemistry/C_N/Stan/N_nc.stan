@@ -1,6 +1,6 @@
 data{ 
   int n;
-  vector[n] C;
+  vector[n] N;
   array[n] int Treatment;
   int n_Treatment;
   array[n] int Season;
@@ -8,24 +8,19 @@ data{
   array[n] int Individual;
   int n_Individual;
 }
-  
-transformed data{
-  vector[n] C_prop;
-  C_prop = C / 100;
-}
 
 parameters{
-  // Intercepts in logit space
+  // Intercepts in log space
   vector[n_Treatment] alpha_t; 
   matrix[n_Treatment, n_Season] z_s; // z-scores
-  matrix[n_Treatment, n_Individual] z_i;
+  matrix[n_Treatment, n_Individual] z_i; 
       
   // Seasonal and inter-individual variability
   vector<lower=0>[n_Treatment] sigma_s;
   vector<lower=0>[n_Treatment] sigma_i;
       
-  // Likelihood precision: nu = ( mu * (1 - mu) / square(sigma) - 1 )
-  real<lower=0> nu;
+  // Likelihood uncertainty
+  real<lower=0> sigma; 
 }
 
 model{
@@ -34,11 +29,11 @@ model{
   sigma_i ~ exponential( 5 );
       
   // Priors
-  alpha_t ~ normal( logit(0.3) , 0.3 );
+  alpha_t ~ normal( log(2) , 0.5 );
   to_vector(z_s) ~ normal( 0 , 1 );
   to_vector(z_i) ~ normal( 0 , 1 );
-  nu ~ gamma( square(30) / square(20) , 30 / square(20) );
-  
+  sigma ~ exponential( 5 );
+      
   // Convert z-scores
   matrix[n_Treatment, n_Season] alpha_s;
   matrix[n_Treatment, n_Individual] alpha_i;
@@ -51,21 +46,20 @@ model{
       alpha_i[i, j] = z_i[i, j] * sigma_i[i] + 0;
     }
   }
-  
+      
   // Model with link function
   vector[n] mu;
   for ( i in 1:n ) {
-    mu[i] = inv_logit( 
-              alpha_t[ Treatment[i] ] + 
-              alpha_s[ Treatment[i] , Season[i] ] +
-              alpha_i[ Treatment[i] , Individual[i] ]
-            );
+    mu[i] = exp( alpha_t[ Treatment[i] ] + 
+                 alpha_s[ Treatment[i] , Season[i] ] + 
+                 alpha_i[ Treatment[i] , Individual[i] ] );
   }
 
-  // Beta likelihood
-  C_prop ~ beta( mu * nu , (1 - mu) * nu );
+  // Gamma likelihood
+  N ~ gamma( square( mu ) / square( sigma ) ,
+             mu / square( sigma ) );
 }
-
+    
 generated quantities{
   // Save converted z-scores
   matrix[n_Treatment, n_Season] alpha_s;

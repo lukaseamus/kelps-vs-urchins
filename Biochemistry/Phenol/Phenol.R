@@ -1767,7 +1767,7 @@ phenol_diff <- phenol_prior_posterior %>%
 # 4.13.5 Plot difference ####
 phenol_diff %>%
   ggplot(aes(Difference, Parameter)) +
-    ggridges::geom_density_ridges(from = -1, to = 2) +
+    geom_density_ridges(from = -1, to = 2) +
     geom_vline(xintercept = 0) +
     scale_x_continuous(limits = c(-1, 2), oob = scales::oob_keep) +
     theme_minimal() +
@@ -1873,7 +1873,7 @@ Fig_2b_top <- ggplot() +
   scale_x_continuous(limits = c(0, 2), breaks = seq(0, 2, 0.5),
                      labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1)),
                      oob = scales::oob_keep) +
-  scale_fill_manual(values = c("#7030a5", "#c3b300", "grey"),
+  scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
                     guide = guide_legend(reverse = TRUE)) +
   xlab("Phenolic content (%)") +
   coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
