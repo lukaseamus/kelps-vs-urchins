@@ -23,8 +23,8 @@ parameters{
   vector<lower=0>[n_Treatment] sigma_s;
   vector<lower=0>[n_Treatment] sigma_i;
       
-  // Likelihood uncertainty
-  real<lower=0> sigma; 
+  // Likelihood uncertainty (scale)
+  vector<lower=0>[n_Treatment] theta; 
 }
 
 model{
@@ -33,10 +33,10 @@ model{
   sigma_i ~ exponential( 5 );
       
   // Priors
-  alpha_t ~ normal( log(1.07) , 0.2 );
+  alpha_t ~ normal( log(1.07) , 0.4 );
   to_vector(z_s) ~ normal( 0 , 1 );
   to_vector(z_i) ~ normal( 0 , 1 );
-  sigma ~ exponential( 5 );
+  theta ~ exponential( 5 );
       
   // Convert z-scores
   matrix[n_Treatment, n_Season] alpha_s;
@@ -60,8 +60,8 @@ model{
   }
 
   // Gamma likelihood
-  Concentration ~ gamma( square( mu ) / square( sigma ) ,
-                         mu / square( sigma ) );
+  Concentration ~ gamma( mu ./ theta[Treatment] ,
+                         1 ./ theta[Treatment] );
       
   // Normal measurement error
   Concentration_mean ~ normal( Concentration , Concentration_sd );
