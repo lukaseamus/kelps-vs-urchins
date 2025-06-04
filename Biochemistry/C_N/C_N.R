@@ -285,14 +285,14 @@ C_c_samples$summary() %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# Most rhat above 1.001.
+# Most rhat above 1.001. rhat = 1.00 ± 0.00169.
 
 C_nc_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# Next to no rhat above 1.001.
+# No rhat above 1.001. rhat = 1.00 ± 0.0000592.
 
 # Plot comparison between centred and non-centred parameterisation.
 C_nc_samples$summary() %>%
@@ -321,33 +321,33 @@ C_nc_samples$draws(format = "df") %>%
   ggsave(filename = "C_nc_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains are pretty good.
+# Chains are very good.
 
 # 2.3.3 Pairs ####
 C_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "nu"))
+                      "nu[1]"))
 
 C_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "nu"))
+                      "nu[2]"))
 # Correlation between alpha_t and alpha_s for both treatments.
 
 C_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]",
-                      "nu"))
+                      "nu[1]"))
 
 C_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "nu"))
+                      "nu[2]"))
 # Same as above.
 
 # 2.4 Prior-posterior comparison ####
@@ -375,7 +375,7 @@ C_c_prior %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "nu"),
+                   "sigma_i[Treatment]", "nu[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -383,8 +383,8 @@ C_c_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# alpha_i are all clustered around zero, but alpha_s less so, potentially
-# absorbing some of alpha_t. Otherwise generally looks fine.
+# sigma_s seems a bit large, potentially because alpha_s is absorbing 
+# some of alpha_t. Otherwise generally looks fine.
 
 C_nc_prior %>% 
   prior_posterior_draws(
@@ -394,7 +394,7 @@ C_nc_prior %>%
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
                    "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "nu"),
+                   "sigma_i[Treatment]", "nu[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -409,17 +409,17 @@ C_nc_prior %>%
 # I know a priori that they shouldn't contribute to the Treatment effect, so
 # should be identifiable.
 
-C_c_stz_model <- here("Biochemistry", "C_N", "Stan", "C_c_stz.stan") %>% 
+C_c_s2z_model <- here("Biochemistry", "C_N", "Stan", "C_c_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-C_nc_stz_model <- here("Biochemistry", "C_N", "Stan", "C_nc_stz.stan") %>% 
+C_nc_s2z_model <- here("Biochemistry", "C_N", "Stan", "C_nc_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-C_c_stz_samples <- C_c_stz_model$sample(
+C_c_s2z_samples <- C_c_s2z_model$sample(
           data = C_N %>%
             select(-N) %>%
             compose_data(),
@@ -429,7 +429,7 @@ C_c_stz_samples <- C_c_stz_model$sample(
           iter_sampling = 1e4,
         )
 
-C_nc_stz_samples <- C_nc_stz_model$sample(
+C_nc_s2z_samples <- C_nc_s2z_model$sample(
           data = C_N %>%
             select(-N) %>%
             compose_data(),
@@ -441,23 +441,23 @@ C_nc_stz_samples <- C_nc_stz_model$sample(
 
 # 2.6 Model checks ####
 # 2.6.1 Rhat ####
-C_c_stz_samples$summary() %>%
+C_c_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001. Terrible mean rhat.
+# Most rhat above 1.001. rhat = 1.01 ± 0.00333.
 
-C_nc_stz_samples$summary() %>%
+C_nc_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# No rhat above 1.001.
+# No rhat above 1.001. rhat = 1.00 ± 0.0000813.
 
 # Plot comparison between centred and non-centred parameterisation.
-C_nc_stz_samples$summary() %>%
-  left_join(C_c_stz_samples$summary(),
+C_nc_s2z_samples$summary() %>%
+  left_join(C_c_s2z_samples$summary(),
             by = "variable") %>%
   rename(rhat_nc = rhat.x, rhat_c = rhat.y) %>%
   ggplot(aes(rhat_c, rhat_nc)) +
@@ -466,75 +466,75 @@ C_nc_stz_samples$summary() %>%
     theme_minimal() +
     theme(panel.grid = element_blank())
 # Warning because z-scores are dropped as they have no equivalent in
-# the centred parameteristion. The non-centred model is much better.
+# the centred parameteristion. The non-centred model is better.
 
 # 2.6.2 Chains ####
-C_c_stz_samples$draws(format = "df") %>%
+C_c_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "C_c_stz_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "C_c_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains are much worse.
+# Chains are slightly better than before.
 
-C_nc_stz_samples$draws(format = "df") %>%
+C_nc_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "C_nc_stz_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "C_nc_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
 # Chains are great.
 
 # 2.6.3 Pairs ####
-C_c_stz_samples$draws(format = "df") %>%
+C_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "nu"))
+                      "nu[1]"))
 
-C_c_stz_samples$draws(format = "df") %>%
+C_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "nu"))
-# Bad funnels.
+                      "nu[2]"))
+# Correlation gone. Looks good.
 
-C_nc_stz_samples$draws(format = "df") %>%
+C_nc_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]",
-                      "nu"))
+                      "nu[1]"))
 
-C_nc_stz_samples$draws(format = "df") %>%
+C_nc_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "nu"))
-# Correlation gone. Looks optimal.
+                      "nu[2]"))
+# Looks optimal.
 
 # 2.7 Prior-posterior comparison ####
 # 2.7.1 Sample priors ####
-C_c_stz_prior <- prior_samples(
-  model = C_c_model,
+C_c_s2z_prior <- prior_samples(
+  model = C_c_s2z_model,
   data = C_N %>%
     select(-N) %>%
     compose_data()
   )
 
-C_nc_stz_prior <- prior_samples(
-  model = C_nc_model,
+C_nc_s2z_prior <- prior_samples(
+  model = C_nc_s2z_model,
   data = C_N %>%
     select(-N) %>%
     compose_data()
 )
 
 # 2.7.2 Plot prior-posterior comparison ####
-C_c_stz_prior %>% 
+C_c_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = C_c_stz_samples,
+    posterior_samples = C_c_s2z_samples,
     group = C_N %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "nu"),
+                   "sigma_i[Treatment]", "nu[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -542,17 +542,17 @@ C_c_stz_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Looks worse than before. Very bad sampling.
+# Looks better than before. Much stronger alpha_t predictions.
 
-C_nc_stz_prior %>% 
+C_nc_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = C_nc_stz_samples,
+    posterior_samples = C_nc_s2z_samples,
     group = C_N %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
                    "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "nu"),
+                   "sigma_i[Treatment]", "nu[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -564,14 +564,14 @@ C_nc_stz_prior %>%
 
 # 2.8 Prediction ####
 # 2.8.1 Combine relevant priors and posteriors ####
-C_prior_posterior <- C_nc_stz_prior %>% 
+C_prior_posterior <- C_nc_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = C_nc_stz_samples,
+    posterior_samples = C_nc_s2z_samples,
     group = C_N %>%
       select(-N) %>%
       select(Treatment),
     parameters = c("alpha_t[Treatment]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "nu"),
+                   "sigma_i[Treatment]", "nu[Treatment]"),
     format = "short"
   )
 
@@ -601,8 +601,6 @@ C_prior_posterior %>%
     scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# For beta, observations and mean are similarly informative but the former is better
-# because more intuitive and compares with other inference, e.g. phenolic content.
 
 # 2.8.4 Convert to percentage ####
 C_prior_posterior %<>%
@@ -669,7 +667,7 @@ C_diff %<>%
 
 # 3. Nitrogen ####
 # 3.1 Prior simulation ####
-# For Laminaria hyperborea, nitrogen content is expected around 2%
+# For Laminaria hyperborea, nitrogen content is expected around 1-2%
 # (1.74%, Wright et al., 10.1111/gcb.16299) but ranges from 0.5% to 
 # 3% across the North Atlantic (Filbee-Dexter et al., 
 # 10.1371/journal.pbio.3001702). These are similarly low concentrations
@@ -677,10 +675,10 @@ C_diff %<>%
 # gamma likelihood, which is easier to parameterise.
 
 tibble(n = 1:1e5,
-       mu_log = rnorm( 1e5 , log(2) , 0.5 ),
-       sigma = rexp( 1e5, 5 ),
+       mu_log = rnorm( 1e5 , log(1.74) , 0.4 ),
+       theta = rexp( 1e5, 5 ),
        mu = exp(mu_log),
-       N = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
+       N = rgamma( 1e5 , mu / theta , 1 / theta )) %>%
   pivot_longer(cols = c(mu, N), 
                names_to = "parameter", values_to = "value") %>%
   ggplot(aes(value, parameter)) +
@@ -729,14 +727,14 @@ N_c_samples$summary() %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# Most rhat above 1.001.
+# Most rhat above 1.001. rhat = 1.01 ± 0.00671.
 
 N_nc_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# No rhat above 1.001.
+# Less than 5% of rhat above 1.001. rhat = 1.00 ± 0.000217.
 
 # Plot comparison between centred and non-centred parameterisation.
 N_nc_samples$summary() %>%
@@ -764,33 +762,33 @@ N_nc_samples$draws(format = "df") %>%
   ggsave(filename = "N_nc_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains are good.
+# Chains are pretty good.
 
 # 3.3.3 Pairs ####
 N_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "sigma"))
+                      "theta[1]"))
 
 N_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
+                      "theta[2]"))
 # Correlation between alpha_t and alpha_s for both treatments.
 
 N_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]",
-                      "sigma"))
+                      "theta[1]"))
 
 N_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
+                      "theta[2]"))
 # Same as above.
 
 # 3.4 Prior-posterior comparison ####
@@ -817,7 +815,7 @@ N_c_prior %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -825,7 +823,7 @@ N_c_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Generally looks fine.
+# alpha_t is very uncertain because of non-identifiability with alpha_s.
 
 N_nc_prior %>% 
   prior_posterior_draws(
@@ -835,7 +833,7 @@ N_nc_prior %>%
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
                    "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -850,17 +848,17 @@ N_nc_prior %>%
 # I know a priori that they shouldn't contribute to the Treatment effect, so
 # should be identifiable.
 
-N_c_stz_model <- here("Biochemistry", "C_N", "Stan", "N_c_stz.stan") %>% 
+N_c_s2z_model <- here("Biochemistry", "C_N", "Stan", "N_c_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-N_nc_stz_model <- here("Biochemistry", "C_N", "Stan", "N_nc_stz.stan") %>% 
+N_nc_s2z_model <- here("Biochemistry", "C_N", "Stan", "N_nc_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-N_c_stz_samples <- N_c_stz_model$sample(
+N_c_s2z_samples <- N_c_s2z_model$sample(
           data = C_N %>%
             select(-C) %>%
             compose_data(),
@@ -870,7 +868,7 @@ N_c_stz_samples <- N_c_stz_model$sample(
           iter_sampling = 1e4,
         )
 
-N_nc_stz_samples <- N_nc_stz_model$sample(
+N_nc_s2z_samples <- N_nc_s2z_model$sample(
           data = C_N %>%
             select(-C) %>%
             compose_data(),
@@ -882,23 +880,23 @@ N_nc_stz_samples <- N_nc_stz_model$sample(
 
 # 3.6 Model checks ####
 # 3.6.1 Rhat ####
-N_c_stz_samples$summary() %>%
+N_c_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001. Terrible mean rhat.
+# Most rhat above 1.001. rhat = 1.00 ± 0.00327.
 
-N_nc_stz_samples$summary() %>%
+N_nc_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# No rhat above 1.001.
+# Less than 1% of rhat above 1.001. rhat = 1.00 ± 0.000152.
 
 # Plot comparison between centred and non-centred parameterisation.
-N_nc_stz_samples$summary() %>%
-  left_join(N_c_stz_samples$summary(),
+N_nc_s2z_samples$summary() %>%
+  left_join(N_c_s2z_samples$summary(),
             by = "variable") %>%
   rename(rhat_nc = rhat.x, rhat_c = rhat.y) %>%
   ggplot(aes(rhat_c, rhat_nc)) +
@@ -907,76 +905,75 @@ N_nc_stz_samples$summary() %>%
     theme_minimal() +
     theme(panel.grid = element_blank())
 # Warning because z-scores are dropped as they have no equivalent in
-# the centred parameteristion. The non-centred model is much better.
+# the centred parameteristion. The non-centred model is better.
 
 # 3.6.2 Chains ####
-N_c_stz_samples$draws(format = "df") %>%
+N_c_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "N_c_stz_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "N_c_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains are much worse.
+# Chains are slightly better than before.
 
-N_nc_stz_samples$draws(format = "df") %>%
+N_nc_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "N_nc_stz_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "N_nc_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "C_N", "Plots"),
          height = 40, width = 40, units = "cm")
 # Chains are great.
 
 # 3.6.3 Pairs ####
-N_c_stz_samples$draws(format = "df") %>%
+N_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "sigma"))
+                      "theta[1]"))
 
-N_c_stz_samples$draws(format = "df") %>%
+N_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
-# Bad funnels.
+                      "theta[2]"))
+# Correlation mostly gone.
 
-N_nc_stz_samples$draws(format = "df") %>%
+N_nc_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]",
-                      "sigma"))
+                      "theta[1]"))
 
-N_nc_stz_samples$draws(format = "df") %>%
+N_nc_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
-# Correlation mostly gone. Some strange samples but stil seems
-# like the best model.
+                      "theta[2]"))
+# Same as above.
 
 # 3.7 Prior-posterior comparison ####
 # 3.7.1 Sample priors ####
-N_c_stz_prior <- prior_samples(
-  model = N_c_model,
+N_c_s2z_prior <- prior_samples(
+  model = N_c_s2z_model,
   data = C_N %>%
     select(-C) %>%
     compose_data()
   )
 
-N_nc_stz_prior <- prior_samples(
-  model = N_nc_model,
+N_nc_s2z_prior <- prior_samples(
+  model = N_nc_s2z_model,
   data = C_N %>%
     select(-C) %>%
     compose_data()
 )
 
 # 3.7.2 Plot prior-posterior comparison ####
-N_c_stz_prior %>% 
+N_c_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = N_c_stz_samples,
+    posterior_samples = N_c_s2z_samples,
     group = C_N %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -984,17 +981,17 @@ N_c_stz_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Looks worse than before. Very bad sampling.
+# Looks fine but posteriors are a bit noisy.
 
-N_nc_stz_prior %>% 
+N_nc_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = N_nc_stz_samples,
+    posterior_samples = N_nc_s2z_samples,
     group = C_N %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
                    "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -1006,23 +1003,23 @@ N_nc_stz_prior %>%
 
 # 3.8 Prediction ####
 # 3.8.1 Combine relevant priors and posteriors ####
-N_prior_posterior <- N_nc_stz_prior %>% 
+N_prior_posterior <- N_nc_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = N_nc_stz_samples,
+    posterior_samples = N_nc_s2z_samples,
     group = C_N %>%
       select(-C) %>%
       select(Treatment),
     parameters = c("alpha_t[Treatment]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "short"
   )
 
 # 3.8.2 Calculate predictions for new experiments and tanks ####
 N_prior_posterior %<>%
   mutate(mu = exp( alpha_t ),
-         obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ),
+         obs = rgamma( n() , mu / theta , 1 / theta ),
          mu_new = exp( alpha_t + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_i ) ),
-         obs_new = rgamma( n() , mu_new^2 / sigma^2 , mu_new / sigma^2 ))
+         obs_new = rgamma( n() , mu_new / theta , 1 / theta ))
 
 # 3.8.3 Remove redundant prior ####
 N_prior_posterior %<>% # priors are identical for both treatments ->
@@ -1047,7 +1044,7 @@ N_prior_posterior %>%
 N_diff <- N_prior_posterior %>%
   filter(Treatment != "Prior") %>%
   droplevels() %>%
-  select(-c(alpha_t, sigma_s, sigma_i, sigma)) %>%
+  select(-c(alpha_t, sigma_s, sigma_i, theta)) %>%
   pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
   mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
          obs = obs_Kelp - obs_Faeces,
@@ -1110,7 +1107,7 @@ C_N_prior_posterior <- C_prior_posterior %>%
   left_join(
     N_prior_posterior %>%
       rename(N_mu = mu, N_obs = obs, N_mu_new = mu_new, N_obs_new = obs_new) %>%
-      select(-c(alpha_t, sigma_s, sigma_i, sigma)),
+      select(-c(alpha_t, sigma_s, sigma_i, theta)),
     by = c("Treatment", ".chain", ".iteration", ".draw")
   ) %>%
   mutate(mu = C_mu / N_mu, # Calculate ratio distributions!
@@ -1223,7 +1220,7 @@ Fig_2a_left_top <- ggplot() +
                       aes(x = obs_new, y = Treatment %>% as.numeric(), fill = Treatment), 
                       colour = NA, n = 2^10,
                       from = 0, to = 60, rel_min_height = 0.001, 
-                      bandwidth = 1.5, scale = 3, alpha = 0.6) +
+                      bandwidth = 1, scale = 2, alpha = 0.6) +
   scale_x_continuous(limits = c(0, 60), breaks = seq(0, 60, 20),
                      oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
@@ -1234,33 +1231,51 @@ Fig_2a_left_top <- ggplot() +
                      # override grey fill legend shapes because they can be confused with prior
                      guide = guide_legend(override.aes = list(shape = c(1, 2, 0)))) +
   xlab("Carbon content (%)") +
-  coord_cartesian(ylim = c(0, 4.5), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_left_top
 
 require(geomtextpath)
-Fig_2a_left_bottom <- ggplot() +
-  stat_density_ridges(data = C_diff %>% 
-                        filter(Parameter == "obs_new"),
-                      aes(x = Difference, y = 0, 
+Fig_2a_left_bottom <- C_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter,
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
                       colour = NA, linewidth = 0, bandwidth = 1,
                       from = -50, to = 50, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = C_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Kelp), 
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 17 + 1,
+                       label = label_Kelp),
                    colour = "#c3b300", family = "Futura", 
                    size = 3.5, hjust = 0.8, vjust = 0,
                    n = 2^10, bw = 1, text_only = TRUE) +
-  geom_textdensity(data = C_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Faeces), 
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 17 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura", 
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 1, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 17 + 1,
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura", 
+                   size = 3.5, hjust = 0.25, vjust = 0,
+                   n = 2^10, bw = 1, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 17 + 2,
+                       label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.25, vjust = 0,
                    n = 2^10, bw = 1, text_only = TRUE) +
   geom_vline(xintercept = 0) +
+  annotate("text", x = -50, y = c(1, 2), 
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
   scale_x_continuous(limits = c(-50, 50), oob = scales::oob_keep,
                      breaks = seq(-50, 50, 25),
                      labels = scales::label_number(style_negative = "minus")) +
@@ -1269,6 +1284,7 @@ Fig_2a_left_bottom <- ggplot() +
   xlab("Difference (%)") +
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_left_bottom
 
 # 5.3 Nitrogen ####
 Fig_2a_middle_top <- ggplot() +
@@ -1281,9 +1297,9 @@ Fig_2a_middle_top <- ggplot() +
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), fill = Treatment), 
                       colour = NA, n = 2^10,
-                      from = 0, to = 4, rel_min_height = 0.001, 
-                      bandwidth = 0.06, scale = 3, alpha = 0.6) +
-  scale_x_continuous(limits = c(0, 4), oob = scales::oob_keep) +
+                      from = 0, to = 3, rel_min_height = 0.001, 
+                      bandwidth = 0.05, scale = 2, alpha = 0.6) +
+  scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
                     guide = guide_legend(reverse = TRUE)) +
   scale_colour_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
@@ -1293,41 +1309,58 @@ Fig_2a_middle_top <- ggplot() +
   xlab("Nitrogen content (%)") +
   coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_middle_top
 
-Fig_2a_middle_bottom <- ggplot() +
-  stat_density_ridges(data = N_diff %>% 
-                        filter(Parameter == "obs_new"),
-                      aes(x = Difference, y = 0, 
+Fig_2a_middle_bottom <- N_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.06,
-                      from = -3, to = 3, rel_min_height = 0.001,
+                      colour = NA, linewidth = 0, bandwidth = 0.05,
+                      from = -2, to = 2, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = N_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Kelp), 
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+                       label = label_Kelp),
                    colour = "#c3b300", family = "Futura", 
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
-  geom_textdensity(data = N_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Faeces), 
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.92 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura", 
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+                       label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.22, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.92 + 2,
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura", 
+                   size = 3.5, hjust = 0.22, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  scale_x_continuous(limits = c(-3, 3), oob = scales::oob_keep,
-                     breaks = seq(-3, 3, 1.5),
-                     labels = scales::label_number(style_negative = "minus",
-                                                   accuracy = c(1, 0.1, 1, 0.1, 1))) +
+  annotate("text", x = -2, y = c(1, 2), 
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
+  scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+                     labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
                     guide = "none") +
   xlab("Difference (%)") +
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_middle_bottom
 
-# 5.3 Carbon-nitrogen ####
+# 5.4 Carbon-nitrogen ####
 # Add C:N to data.
 C_N %<>% mutate(C_N = C / N)
 
@@ -1343,7 +1376,7 @@ Fig_2a_right_top <- ggplot() +
                           fill = Treatment), 
                       colour = NA, n = 2^10,
                       from = 0, to = 120, rel_min_height = 0.001, 
-                      bandwidth = 1.5, scale = 3, alpha = 0.6) +
+                      bandwidth = 1.5, scale = 1.2, alpha = 0.6) +
   scale_x_continuous(limits = c(0, 120), oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
                     guide = guide_legend(reverse = TRUE)) +
@@ -1352,32 +1385,50 @@ Fig_2a_right_top <- ggplot() +
   scale_shape_manual(values = c(16, 17, 15),
                      guide = guide_legend(override.aes = list(shape = c(1, 2, 0)))) +
   xlab("Carbon-nitrogen ratio") +
-  coord_cartesian(ylim = c(0, 6), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_right_top
 
-Fig_2a_right_bottom <- ggplot() +
-  stat_density_ridges(data = C_N_diff %>% 
-                        filter(Parameter == "obs_new"),
-                      aes(x = Difference, y = 0, 
+Fig_2a_right_bottom <- C_N_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 2.5,
+                      colour = NA, linewidth = 0, bandwidth = 2,
                       from = -150, to = 150, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = C_N_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Kelp), 
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 50 + 1,
+                       label = label_Kelp),
                    colour = "#c3b300", family = "Futura", 
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 2.5, text_only = TRUE) +
-  geom_textdensity(data = C_N_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Faeces), 
+                   n = 2^10, bw = 2, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 50 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura", 
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 2, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 50 + 1,
+                       label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.25, vjust = 0,
-                   n = 2^10, bw = 2.5, text_only = TRUE) +
+                   n = 2^10, bw = 2, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 50 + 2,
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura", 
+                   size = 3.5, hjust = 0.25, vjust = 0,
+                   n = 2^10, bw = 2, text_only = TRUE) +
   geom_vline(xintercept = 0) +
+  annotate("text", x = -150, y = c(1, 2), 
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
   scale_x_continuous(limits = c(-150, 150), oob = scales::oob_keep,
                      labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
@@ -1385,20 +1436,13 @@ Fig_2a_right_bottom <- ggplot() +
   xlab("Difference (%)") +
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme
+Fig_2a_right_bottom
 
-
-Fig_2a <- ( ( Fig_2a_left_top / Fig_2a_left_bottom ) +
-              plot_layout(heights = c(1, 0.3333333)) | 
-            ( Fig_2a_middle_top / Fig_2a_middle_bottom ) +
-              plot_layout(heights = c(1, 0.3333333)) |
-            ( Fig_2a_right_top / Fig_2a_right_bottom ) +
-              plot_layout(heights = c(1, 0.3333333)) ) 
-
-Fig_2a %>%
-  ggsave(filename = "Fig_2a.pdf", device = cairo_pdf, path = "Figures", 
-         height = 12, width = 21, units = "cm")
-
-# 4.14.4 Save relevant data ####
-ID_dens %>% write_rds(here("Biochemistry", "Phenol", "RDS", "ID_dens.rds"))
-phenol_prior_posterior %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_prior_posterior.rds"))
-phenol_diff %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_diff.rds"))
+# 6. Save relevant data ####
+C_N %>% write_rds(here("Biochemistry", "C_N", "RDS", "C_N.rds"))
+C_prior_posterior %>% write_rds(here("Biochemistry", "C_N", "RDS", "C_prior_posterior.rds"))
+C_diff %>% write_rds(here("Biochemistry", "C_N", "RDS", "C_diff.rds"))
+N_prior_posterior %>% write_rds(here("Biochemistry", "C_N", "RDS", "N_prior_posterior.rds"))
+N_diff %>% write_rds(here("Biochemistry", "C_N", "RDS", "N_diff.rds"))
+C_N_prior_posterior %>% write_rds(here("Biochemistry", "C_N", "RDS", "C_N_prior_posterior.rds"))
+C_N_diff %>% write_rds(here("Biochemistry", "C_N", "RDS", "C_N_diff.rds"))
