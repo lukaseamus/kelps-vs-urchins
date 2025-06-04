@@ -25,7 +25,7 @@ parameters{
   vector<lower=0>[n_Treatment] sigma_i;
       
   // Likelihood precision: nu = ( mu * (1 - mu) / square(sigma) - 1 )
-  real<lower=0> nu;
+  vector<lower=0>[n_Treatment] nu;
 }
 
 model{
@@ -52,5 +52,6 @@ model{
   }
 
   // Beta likelihood
-  C_prop ~ beta( mu * nu , (1 - mu) * nu );
+  C_prop ~ beta( mu .* nu[Treatment] , 
+                 (1 - mu) .* nu[Treatment] );
 }
