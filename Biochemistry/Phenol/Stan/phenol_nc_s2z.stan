@@ -16,15 +16,15 @@ parameters{
       
   // Intercepts in log space
   vector[n_Treatment] alpha_t; 
-  matrix[n_Treatment, n_Season] z_s; // z-scores
-  matrix[n_Treatment, n_Individual] z_i; 
+  array[n_Treatment] sum_to_zero_vector[n_Season] z_s;
+  array[n_Treatment] sum_to_zero_vector[n_Individual] z_i;
       
   // Seasonal and inter-individual variability
   vector<lower=0>[n_Treatment] sigma_s;
   vector<lower=0>[n_Treatment] sigma_i;
       
-  // Likelihood uncertainty
-  real<lower=0> sigma; 
+  // Likelihood uncertainty (scale)
+  vector<lower=0>[n_Treatment] theta; 
 }
 
 model{
@@ -33,10 +33,12 @@ model{
   sigma_i ~ exponential( 5 );
       
   // Priors
-  alpha_t ~ normal( log(1.07) , 1 );
-  to_vector(z_s) ~ normal( 0 , 1 );
-  to_vector(z_i) ~ normal( 0 , 1 );
-  sigma ~ exponential( 5 );
+  alpha_t ~ normal( log(1.07) , 0.4 );
+  for (i in 1:n_Treatment) {
+    z_s[i][] ~ normal( 0 , 1 );
+    z_i[i][] ~ normal( 0 , 1 );
+  }
+  theta ~ exponential( 5 );
       
   // Convert z-scores
   matrix[n_Treatment, n_Season] alpha_s;
@@ -44,10 +46,12 @@ model{
       
   for (i in 1:n_Treatment) {
     for (j in 1:n_Season) {
-      alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
+      alpha_s[i, j] = z_s[i][j] * sqrt( n_Season * inv( n_Season - 1 ) ) * 
+                      sigma_s[i] + 0;
     }
     for (j in 1:n_Individual) {
-      alpha_i[i, j] = z_i[i, j] * sigma_i[i] + 0;
+      alpha_i[i, j] = z_i[i][j] * sqrt( n_Individual * inv( n_Individual - 1 ) ) * 
+                      sigma_i[i] + 0;
     }
   }
       
@@ -60,8 +64,8 @@ model{
   }
 
   // Gamma likelihood
-  Concentration ~ gamma( square( mu ) / square( sigma ) ,
-                         mu / square( sigma ) );
+  Concentration ~ gamma( mu ./ theta[Treatment] , 
+                         1 ./ theta[Treatment] );
       
   // Normal measurement error
   Concentration_mean ~ normal( Concentration , Concentration_sd );
@@ -74,10 +78,12 @@ generated quantities{
       
   for (i in 1:n_Treatment) {
     for (j in 1:n_Season) {
-      alpha_s[i, j] = z_s[i, j] * sigma_s[i] + 0;
+      alpha_s[i, j] = z_s[i][j] * sqrt( n_Season * inv( n_Season - 1 ) ) * 
+                      sigma_s[i] + 0;
     }
     for (j in 1:n_Individual) {
-      alpha_i[i, j] = z_i[i, j] * sigma_i[i] + 0;
+      alpha_i[i, j] = z_i[i][j] * sqrt( n_Individual * inv( n_Individual - 1 ) ) * 
+                      sigma_i[i] + 0;
     }
   }
 }

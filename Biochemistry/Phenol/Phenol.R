@@ -1177,10 +1177,12 @@ phenol %>%
 # expectation is that the mean for both treatments must fall near 1.07%.
 
 tibble(n = 1:1e5,
-       mu_log = rnorm( 1e5 , log(1.07) , 0.2 ),
-       sigma = rexp( 1e5, 5 ),
+       mu_log = rnorm( 1e5 , log(1.07) , 0.4 ),
+       # sigma = rexp( 1e5, 5 ),
+       theta = rexp( 1e5, 5 ),
        mu = exp(mu_log),
-       P = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )) %>%
+       # P = rgamma( 1e5 , mu^2 / sigma^2 , mu / sigma^2 )
+       P = rgamma( 1e5 , mu / theta , 1 / theta )) %>% # mean-scale parameterisation seems more stable
   pivot_longer(cols = c(mu, P), 
                names_to = "parameter", values_to = "value") %>%
   ggplot(aes(value, parameter)) +
@@ -1237,14 +1239,14 @@ phenol_c_samples$summary() %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001.
+# All rhat above 1.001. rhat = 1.03 ± 0.0207.
 
 phenol_nc_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001.
+# Most rhat above 1.001. rhat = 1.00 ± 0.00224.
 
 # Plot comparison between centred and non-centred parameterisation.
 phenol_nc_samples$summary() %>%
@@ -1265,20 +1267,21 @@ phenol_c_samples$draws(format = "df") %>%
   ggsave(filename = "phenol_c_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
+# Chains look ok.
 
 phenol_nc_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
   ggsave(filename = "phenol_nc_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains don't look great.
+# Chains look good.
 
 # 4.5.3 Pairs ####
 phenol_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "sigma"))
+                      "theta[1]"))
 # Correlation between alpha_t and alpha_s for Treatment 1 (Faeces).
 # alpha_s is being pulled far away from its zero mean and there is
 # a strong inflation of sigma_s.
@@ -1287,7 +1290,7 @@ phenol_c_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
+                      "theta[2]"))
 # Correlation is reduced for Treatment 2 (Kelp). This means alpha_s is
 # absorbing some of the Treatment effect of alpha_t, but mostly for Faeces,
 # most likely because the alpha prior is fairly constrained and way above 
@@ -1301,14 +1304,14 @@ phenol_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]",
-                      "sigma"))
+                      "theta[1]"))
 
 phenol_nc_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]",
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]",
-                      "sigma"))
-# Same as above.
+                      "theta[2]"))
+# Similar to above.
 
 # 4.6 Prior-posterior comparison ####
 # 4.6.1 Sample priors ####
@@ -1338,7 +1341,7 @@ phenol_c_prior %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -1359,7 +1362,7 @@ phenol_nc_prior %>%
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
                    "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -1367,23 +1370,24 @@ phenol_nc_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Same as above.
+# Similar to above, but somehwat cleaner posteriors.
 
 # 4.7 Stan models ####
-# One way to get around alpha_s absorbing some of alpha is to relax the prior
-# on alpha. Let's try the same models with wide priors to see this effect.
+# I want to get rid of the non-identifiability between alpha_t and alpha_s or alpha_i, 
+# because I know a priori that alpha_t should capture all the treatment effect. Let's 
+# try sum-to-zero parameters for alpha_s and alpha_i with the original alpha_t prior.
 
-phenol_c_w_model <- here("Biochemistry", "Phenol", "Stan", "phenol_c_w.stan") %>%
+phenol_c_s2z_model <- here("Biochemistry", "Phenol", "Stan", "phenol_c_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-phenol_nc_w_model <- here("Biochemistry", "Phenol", "Stan", "phenol_nc_w.stan") %>%
+phenol_nc_s2z_model <- here("Biochemistry", "Phenol", "Stan", "phenol_nc_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-phenol_c_w_samples <- phenol_c_w_model$sample(
+phenol_c_s2z_samples <- phenol_c_s2z_model$sample(
           data = phenol %>%
             select(Treatment, Season, Individual, Samples_Data_Summary) %>%
             unnest(cols = Samples_Data_Summary) %>%
@@ -1394,7 +1398,7 @@ phenol_c_w_samples <- phenol_c_w_model$sample(
           iter_sampling = 1e4,
         )
 
-phenol_nc_w_samples <- phenol_nc_w_model$sample(
+phenol_nc_s2z_samples <- phenol_nc_s2z_model$sample(
           data = phenol %>%
             select(Treatment, Season, Individual, Samples_Data_Summary) %>%
             unnest(cols = Samples_Data_Summary) %>%
@@ -1407,89 +1411,87 @@ phenol_nc_w_samples <- phenol_nc_w_model$sample(
 
 # 4.8 Model checks ####
 # 4.8.1 Rhat ####
-phenol_c_w_samples$summary() %>%
+phenol_c_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001.
+# About half of rhat above 1.001. rhat = 1.00 ± 0.00312.
 
-phenol_nc_w_samples$summary() %>%
+phenol_nc_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001.
+# Most rhat above 1.001. rhat = 1.00 ± 0.00230. 
 
 # Plot comparison between centred and non-centred parameterisation.
-phenol_nc_w_samples$summary() %>%
-  left_join(phenol_c_w_samples$summary(),
+phenol_nc_s2z_samples$summary() %>%
+  left_join(phenol_c_s2z_samples$summary(),
             by = "variable") %>%
-  rename(rhat_nc_w = rhat.x, rhat_c_w = rhat.y) %>%
-  ggplot(aes(rhat_c_w, rhat_nc_w)) +
+  rename(rhat_nc_s2z = rhat.x, rhat_c_s2z = rhat.y) %>%
+  ggplot(aes(rhat_c_s2z, rhat_nc_s2z)) +
     geom_abline(slope = 1) +
     geom_point() +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# Warning because z-scores are dropped as they have no equivlent in the
-# centred parameteristion. Models are similar.
+# Warning because z-scores are dropped as they have no equivalent in
+# the centred parameteristion. The centred model is better.
 
 # 4.8.2 Chains ####
-phenol_c_w_samples$draws(format = "df") %>%
+phenol_c_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_c_w_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "phenol_c_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
+# Great chains.
 
-phenol_nc_w_samples$draws(format = "df") %>%
+phenol_nc_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_nc_w_chains.pdf", device = cairo_pdf, 
+  ggsave(filename = "phenol_nc_s2z_chains.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Phenol", "Plots"),
          height = 40, width = 40, units = "cm")
-# Chains look worse.
+# Good chains.
 
 # 4.8.3 Pairs ####
-phenol_c_w_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[1]", 
-                      "alpha_s[1,1]", "sigma_s[1]",
-                      "alpha_i[1,1]", "sigma_i[1]", 
-                      "sigma"))
-# Correlation between alpha_t and alpha_s is worse, although less
-# and alpha_s is now centred on zero. So the outcome is better but 
-# the sampling is still ineffecient due to non-identifiability.
+phenol_c_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[1]", # note that counterintuitively matrix indexing
+                      "alpha_s[1,1]", "sigma_s[1]", # [ , ] must be used instead of
+                      "alpha_i[1,1]", "sigma_i[1]", # array indexing [][] for arrays
+                      "theta[1]"))
+# Correlation is gone. alpha_t and sigma_i and sigma_s are more realistic.
 
-phenol_c_w_samples$draws(format = "df") %>%
+phenol_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[2]", 
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]", 
-                      "sigma"))
-# Interestingly correlation shows up for Kelp to a similar extent.
+                      "theta[2]"))
 
-phenol_nc_w_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[1]", 
+phenol_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[1]",
                       "alpha_s[1,1]", "sigma_s[1]",
-                      "alpha_i[1,1]", "sigma_i[1]",
-                      "sigma"))
+                      "alpha_i[1,1]", "sigma_i[1]", 
+                      "theta[1]"))
 
-phenol_nc_w_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[2]",
+phenol_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[2]", 
                       "alpha_s[2,1]", "sigma_s[2]",
                       "alpha_i[2,1]", "sigma_i[2]", 
-                      "sigma"))
+                      "theta[2]"))
 # Similar to above.
 
 # 4.9 Prior-posterior comparison ####
-# 4.9.1 Sample priors ####
-phenol_c_w_prior <- prior_samples(
-  model = phenol_c_w_model,
+# 4.9.1 Sample prior ####
+phenol_c_s2z_prior <- prior_samples(
+  model = phenol_c_s2z_model,
   data = phenol %>%
     select(Treatment, Season, Individual, Samples_Data_Summary) %>%
     unnest(cols = Samples_Data_Summary) %>%
     compose_data()
   )
 
-phenol_nc_w_prior <- prior_samples(
-  model = phenol_nc_w_model,
+phenol_nc_s2z_prior <- prior_samples(
+  model = phenol_nc_s2z_model,
   data = phenol %>%
     select(Treatment, Season, Individual, Samples_Data_Summary) %>%
     unnest(cols = Samples_Data_Summary) %>%
@@ -1497,187 +1499,16 @@ phenol_nc_w_prior <- prior_samples(
 )
 
 # 4.9.2 Plot prior-posterior comparison ####
-phenol_c_w_prior %>% 
+phenol_c_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = phenol_c_w_samples,
-    group = phenol %>%
-      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-      unnest(cols = Samples_Data_Summary) %>%
-      select(Treatment, Season, Individual),
-    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
-                   "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
-    format = "long"
-    ) %T>%
-  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
-      print() } %T>%
-  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
-      print() } %>%
-  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-
-phenol_nc_w_prior %>% 
-  prior_posterior_draws(
-    posterior_samples = phenol_nc_w_samples,
-    group = phenol %>%
-      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-      unnest(cols = Samples_Data_Summary) %>%
-      select(Treatment, Season, Individual),
-    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
-                   "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
-                   "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
-    format = "long"
-    ) %T>%
-  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
-      print() } %T>%
-  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
-      print() } %>%
-  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# alpha_s and alpha_i are all clustered around zero, so are not absorbing anything
-# from alpha_t. Consequently sigma_s for Faeces is now more reasonable. The posterior 
-# for alpha for Faeces is also much more realistic given the data.
-
-# 4.10 Stan models ####
-# Ideally I want to keep the strong prior on alpha, which is suggested by the literature.
-# I also want to get rid of the non-identifiability between alpha and alpha_s or alpha_t.
-# Let's try sum-to-zero parameters for alpha_s and alpha_t with the original alpha prior.
-
-phenol_c_stz_model <- here("Biochemistry", "Phenol", "Stan", "phenol_c_stz.stan") %>% 
-  read_file() %>%
-  write_stan_file() %>%
-  cmdstan_model()
-
-phenol_nc_stz_model <- here("Biochemistry", "Phenol", "Stan", "phenol_nc_stz.stan") %>% 
-  read_file() %>%
-  write_stan_file() %>%
-  cmdstan_model()
-
-phenol_c_stz_samples <- phenol_c_stz_model$sample(
-          data = phenol %>%
-            select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-            unnest(cols = Samples_Data_Summary) %>%
-            compose_data(),
-          chains = 8,
-          parallel_chains = parallel::detectCores(),
-          iter_warmup = 1e4,
-          iter_sampling = 1e4,
-        )
-# Samples very slowly.
-
-phenol_nc_stz_samples <- phenol_nc_stz_model$sample(
-          data = phenol %>%
-            select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-            unnest(cols = Samples_Data_Summary) %>%
-            compose_data(),
-          chains = 8,
-          parallel_chains = parallel::detectCores(),
-          iter_warmup = 1e4,
-          iter_sampling = 1e4,
-        )
-# Samples very fast.
-
-# 4.11 Model checks ####
-# 4.11.1 Rhat ####
-phenol_c_stz_samples$summary() %>%
-  mutate(rhat_check = rhat > 1.001) %>%
-  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
-            rhat_mean = mean(rhat),
-            rhat_sd = sd(rhat))
-# All rhat above 1.001. Terrible average rhat.
-
-phenol_nc_stz_samples$summary() %>%
-  mutate(rhat_check = rhat > 1.001) %>%
-  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
-            rhat_mean = mean(rhat),
-            rhat_sd = sd(rhat))
-# No rhat above 1.001.
-
-# Plot comparison between centred and non-centred parameterisation.
-phenol_nc_stz_samples$summary() %>%
-  left_join(phenol_c_stz_samples$summary(),
-            by = "variable") %>%
-  rename(rhat_nc_stz = rhat.x, rhat_c_stz = rhat.y) %>%
-  ggplot(aes(rhat_c_stz, rhat_nc_stz)) +
-    geom_abline(slope = 1) +
-    geom_point() +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-# Warning because z-scores are dropped as they have no equivalent in
-# the centred parameteristion. The non-centred model is much better.
-
-# 4.11.2 Chains ####
-phenol_c_stz_samples$draws(format = "df") %>%
-  mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_c_stz_chains.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
-         height = 40, width = 40, units = "cm")
-# Worst chains yet.
-
-phenol_nc_stz_samples$draws(format = "df") %>%
-  mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_nc_stz_chains.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
-         height = 40, width = 40, units = "cm")
-# Great chains.
-
-# 4.11.3 Pairs ####
-phenol_c_stz_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[1]", # note that counterintuitively
-                      "alpha_s[1,1]", "sigma_s[1]", # matrix indexing must be used
-                      "alpha_i[1,1]", "sigma_i[1]", # for arrays of vectors
-                      "sigma"))
-# Very poor posteriors. Bad funnels. Correlation between alpha_t and sigma.
-
-phenol_c_stz_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[2]", 
-                      "alpha_s[2,1]", "sigma_s[2]",
-                      "alpha_i[2,1]", "sigma_i[2]", 
-                      "sigma"))
-
-phenol_nc_stz_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[1]",
-                      "alpha_s[1,1]", "sigma_s[1]",
-                      "alpha_i[1,1]", "sigma_i[1]", 
-                      "sigma"))
-
-phenol_nc_stz_samples$draws(format = "df") %>%
-  mcmc_pairs(pars = c("alpha_t[2]", 
-                      "alpha_s[2,1]", "sigma_s[2]",
-                      "alpha_i[2,1]", "sigma_i[2]", 
-                      "sigma"))
-# Best posteriors so far. Has correlation between alpha_t and sigma for
-# Treatment 1 (Faeces) but not for Treatment 2 (Kelp) so sigma is 
-# identified.
-
-# 4.12 Prior-posterior comparison ####
-# 4.12.1 Sample prior ####
-phenol_c_stz_prior <- prior_samples(
-  model = phenol_c_stz_model,
-  data = phenol %>%
-    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-    unnest(cols = Samples_Data_Summary) %>%
-    compose_data()
-  )
-
-phenol_nc_stz_prior <- prior_samples(
-  model = phenol_nc_stz_model,
-  data = phenol %>%
-    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
-    unnest(cols = Samples_Data_Summary) %>%
-    compose_data()
-)
-
-# 4.12.2 Plot prior-posterior comparison ####
-phenol_c_stz_prior %>% 
-  prior_posterior_draws(
-    posterior_samples = phenol_c_stz_samples,
+    posterior_samples = phenol_c_s2z_samples,
     group = phenol %>%
       select(Treatment, Season, Individual, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
       select(Treatment, Season, Individual),
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment][Season]", 
                    "alpha_i[Treatment][Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
   ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -1685,11 +1516,11 @@ phenol_c_stz_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Can't even see what's going on, posteriors are so poor.
+# Looks optimal.
 
-phenol_nc_stz_prior %>% 
+phenol_nc_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = phenol_nc_stz_samples,
+    posterior_samples = phenol_nc_s2z_samples,
     group = phenol %>%
       select(Treatment, Season, Individual, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
@@ -1697,7 +1528,7 @@ phenol_nc_stz_prior %>%
     parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
                    "alpha_i[Treatment, Individual]", "z_s[Treatment][Season]", 
                    "z_i[Treatment][Individual]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "long"
     ) %T>%
   { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
@@ -1705,37 +1536,37 @@ phenol_nc_stz_prior %>%
   { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
       print() } %>%
   prior_posterior_plot(group_name = "Individual", ridges = FALSE)
-# Looks optimal.
+# Posteriors are a bit messier than in the centred model.
 
-# 4.13 Prediction ####
-# 4.13.1 Combine relevant priors and posteriors ####
-phenol_prior_posterior <- phenol_nc_stz_prior %>% 
+# 4.10 Prediction ####
+# 4.10.1 Combine relevant priors and posteriors ####
+phenol_prior_posterior <- phenol_c_s2z_prior %>% 
   prior_posterior_draws(
-    posterior_samples = phenol_nc_stz_samples,
+    posterior_samples = phenol_c_s2z_samples,
     group = phenol %>%
       select(Treatment, Season, Individual, Samples_Data_Summary) %>%
       unnest(cols = Samples_Data_Summary) %>%
       select(Treatment),
     parameters = c("alpha_t[Treatment]", "sigma_s[Treatment]", 
-                   "sigma_i[Treatment]", "sigma"),
+                   "sigma_i[Treatment]", "theta[Treatment]"),
     format = "short"
   )
 
-# 4.13.2 Calculate predictions for new experiments and tanks ####
+# 4.10.2 Calculate predictions for new experiments and tanks ####
 phenol_prior_posterior %<>%
   mutate(mu = exp( alpha_t ),
-         obs = rgamma( n() , mu^2 / sigma^2 , mu / sigma^2 ),
+         obs = rgamma( n() , mu / theta , 1 / theta ),
          mu_new = exp( alpha_t + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_i ) ),
-         obs_new = rgamma( n() , mu_new^2 / sigma^2 , mu_new / sigma^2 ))
+         obs_new = rgamma( n() , mu_new / theta , 1 / theta ))
 
-# 4.13.3 Remove redundant prior ####
+# 4.10.3 Remove redundant prior ####
 phenol_prior_posterior %<>% # priors are identical for both treatments ->
   filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
   mutate(Treatment = if_else(distribution == "prior", # add Prior to treatment
                              "Prior", Treatment) %>% fct()) %>%
   select(-distribution)
 
-# 4.13.3 Plot predictions ####
+# 4.10.4 Plot predictions ####
 require(ggridges) # ggridges is better than ggdist for limiting distribution ranges
 phenol_prior_posterior %>%
   pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
@@ -1747,13 +1578,26 @@ phenol_prior_posterior %>%
     scale_x_continuous(limits = c(0, 2), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# For gamma, observations definitely are more informative than the mean.
+# For Faeces, mu and observations are practically identical.
 
-# 4.13.4 Calculate difference ####
+phenol_prior_posterior %>%
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Concentration", names_to = "Level") %>%
+  filter(Level %in% c("mu", "mu_new")) %>%
+  ggplot(aes(Concentration, Treatment, alpha = Level)) +
+    geom_density_ridges(from = 0, to = 2) +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 2), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Season and individual add quite a bit of variability to the mean
+# of kelp.
+
+# 4.10.5 Calculate difference ####
 phenol_diff <- phenol_prior_posterior %>%
   filter(Treatment != "Prior") %>%
   droplevels() %>%
-  select(-c(alpha_t, sigma_s, sigma_i, sigma)) %>%
+  select(-c(alpha_t, sigma_s, sigma_i, theta)) %>%
   pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
   mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
          obs = obs_Kelp - obs_Faeces,
@@ -1764,7 +1608,7 @@ phenol_diff <- phenol_prior_posterior %>%
                names_to = "Parameter",
                values_to = "Difference")
 
-# 4.13.5 Plot difference ####
+# 4.10.6 Plot difference ####
 phenol_diff %>%
   ggplot(aes(Difference, Parameter)) +
     geom_density_ridges(from = -1, to = 2) +
@@ -1773,7 +1617,7 @@ phenol_diff %>%
     theme_minimal() +
     theme(panel.grid = element_blank())
 
-# 4.13.6 Summarise difference ####
+# 4.10.7 Summarise difference ####
 phenol_diff_summary <- phenol_diff %>%
   group_by(Parameter) %>%
   summarise(mean = mean(Difference),
@@ -1781,8 +1625,9 @@ phenol_diff_summary <- phenol_diff %>%
             P = mean(Difference > 0),
             n = length(Difference)) %T>%
   print()
+# There is a 100% chance that means and observations are different.
 
-# 4.13.7 Add labels to phenol_diff ####
+# 4.10.8 Add labels to phenol_diff ####
 phenol_diff %<>%
   left_join(phenol_diff_summary %>%
               select(Parameter, P), 
@@ -1794,8 +1639,8 @@ phenol_diff %<>%
            signif(digits = 2) %>% 
            str_c("%"))
 
-# 4.14 Visualisation ####
-# 4.14.1 Calculate densities ####
+# 4.11 Visualisation ####
+# 4.11.1 Calculate densities ####
 ID_dens <- phenol %>%
   select(Treatment, Season, Individual, ID, Samples_Data) %>%
   unnest(cols = Samples_Data) %>%
@@ -1803,7 +1648,7 @@ ID_dens <- phenol %>%
   reframe(x = density(Concentration, n = 2^10, from = -0.1, to = 2)$x, # computation range is limited and
           y = density(Concentration, n = 2^10, from = -0.1, to = 2)$y) # n is increased to improve KDE
 
-# 4.14.2 Manipulate densities ####
+# 4.11.2 Manipulate densities ####
 # Rescale
 ID_dens %<>%
   group_by(ID) %>%
@@ -1824,7 +1669,7 @@ ID_dens %<>%
   ungroup()
 
 
-# 4.14.3 Plot ####
+# 4.11.3 Plot ####
 # Define custom theme
 mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
@@ -1858,9 +1703,9 @@ mytheme <- theme(panel.background = element_blank(),
 
 Fig_2b_top <- ggplot() +
   geom_polygon(data = ID_dens %>% # Stratify by Treatment
-                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.7, 1.7)) %>%
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.6, 1.6)) %>%
                  group_by(ID) %>% # Jitter
-                 mutate(y_area = y_area + runif( 1 , -0.2 , 0.2 )),
+                 mutate(y_area = y_area + runif( 1 , -0.35 , 0.35 )),
                aes(x = x, y = y_area, group = ID, 
                    fill = Treatment), 
                alpha = 0.2) +
@@ -1869,7 +1714,7 @@ Fig_2b_top <- ggplot() +
                       aes(x = obs_new, y = Treatment %>% as.numeric(), 
                           fill = Treatment), colour = NA, n = 2^10,
                       from = 0, to = 2, rel_min_height = 0.001, 
-                      bandwidth = 0.05, scale = 3, alpha = 0.6) +
+                      bandwidth = 0.03, scale = 3, alpha = 0.6) +
   scale_x_continuous(limits = c(0, 2), breaks = seq(0, 2, 0.5),
                      labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1)),
                      oob = scales::oob_keep) +
@@ -1878,49 +1723,60 @@ Fig_2b_top <- ggplot() +
   xlab("Phenolic content (%)") +
   coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
   mytheme
+Fig_2b_top
 
 require(geomtextpath)
-Fig_2b_bottom <- ggplot() +
-  stat_density_ridges(data = phenol_diff %>% 
-                        filter(Parameter == "obs_new"),
-                      aes(x = Difference, y = 0, 
+Fig_2b_bottom <- phenol_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.06,
-                      from = -3, to = 3, rel_min_height = 0.001,
+                      colour = NA, linewidth = 0, bandwidth = 0.03,
+                      from = -2, to = 2, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = phenol_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Kelp), 
-                   colour = "#c3b300", family = "Futura", 
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.515 + 1,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
-  geom_textdensity(data = phenol_diff %>% 
-                     filter(Parameter == "obs_new"),
-                   aes(x = Difference, label = label_Faeces), 
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.25, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
+                   n = 2^10, bw = 0.03, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.515 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 0.03, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.515 + 1, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.35, vjust = 0,
+                   n = 2^10, bw = 0.03, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 0.515 + 2, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.32, vjust = 0,
+                   n = 2^10, bw = 0.03, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  scale_x_continuous(limits = c(-3, 3), oob = scales::oob_keep,
-                     breaks = seq(-3, 3, 1.5),
-                     labels = scales::label_number(style_negative = "minus",
-                                                   accuracy = c(1, 0.1, 1, 0.1, 1))) +
+  annotate("text", x = -2, y = c(1, 2), 
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
+  scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+                     breaks = seq(-2, 2, 1),
+                     labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
                     guide = "none") +
   xlab("Difference (%)") +
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme
+Fig_2b_bottom
 
-Fig_2b <- ( Fig_2b_top / Fig_2b_bottom ) +
-  plot_layout(heights = c(1, 0.3333333))
-
-Fig_2b %>%
-  ggsave(filename = "Phenol.pdf", device = cairo_pdf, path = "Figures", 
-         height = 12, width = 7, units = "cm")
-
-# 4.14.4 Save relevant data ####
+# 5. Save relevant data ####
 ID_dens %>% write_rds(here("Biochemistry", "Phenol", "RDS", "ID_dens.rds"))
 phenol_prior_posterior %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_prior_posterior.rds"))
 phenol_diff %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_diff.rds"))
