@@ -1552,7 +1552,7 @@ phenol_prior_posterior <- phenol_c_s2z_prior %>%
     format = "short"
   )
 
-# 4.10.2 Calculate predictions for new experiments and tanks ####
+# 4.10.2 Calculate predictions for new seasons and sporophytes ####
 phenol_prior_posterior %<>%
   mutate(mu = exp( alpha_t ),
          obs = rgamma( n() , mu / theta , 1 / theta ),
@@ -1625,7 +1625,8 @@ phenol_diff_summary <- phenol_diff %>%
             P = mean(Difference > 0),
             n = length(Difference)) %T>%
   print()
-# There is a 100% chance that means and observations are different.
+# There is a 100% chance that new means and observations are different
+# between treatments.
 
 # 4.10.8 Add labels to phenol_diff ####
 phenol_diff %<>%
@@ -1641,7 +1642,7 @@ phenol_diff %<>%
 
 # 4.11 Visualisation ####
 # 4.11.1 Calculate densities ####
-ID_dens <- phenol %>%
+phenol_ID_dens <- phenol %>%
   select(Treatment, Season, Individual, ID, Samples_Data) %>%
   unnest(cols = Samples_Data) %>%
   group_by(Treatment, ID) %>%
@@ -1650,17 +1651,17 @@ ID_dens <- phenol %>%
 
 # 4.11.2 Manipulate densities ####
 # Rescale
-ID_dens %<>%
+phenol_ID_dens %<>%
   group_by(ID) %>%
   mutate(y_area = y * 0.01 / ( sum(y) * ( x[2] - x[1] ) ), # Riemann sum
          y_height = y * 0.05 / max(y)) %>%
   ungroup()
 
 # Trim
-ID_dens %<>% filter(y > 0.1)
+phenol_ID_dens %<>% filter(y > 0.1)
 
 # Mirror
-ID_dens %<>%
+phenol_ID_dens %<>%
   group_by(Treatment, ID) %>%
   reframe(x = c(x, x %>% rev()),
           y = c(y, -y %>% rev()),
@@ -1702,8 +1703,8 @@ mytheme <- theme(panel.background = element_blank(),
                  text = element_text(family = "Futura"))
 
 Fig_2b_top <- ggplot() +
-  geom_polygon(data = ID_dens %>% # Stratify by Treatment
-                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.6, 1.6)) %>%
+  geom_polygon(data = phenol_ID_dens %>% # Stratify by Treatment
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.5, 1.5)) %>%
                  group_by(ID) %>% # Jitter
                  mutate(y_area = y_area + runif( 1 , -0.35 , 0.35 )),
                aes(x = x, y = y_area, group = ID, 
@@ -1777,6 +1778,12 @@ Fig_2b_bottom <- phenol_diff %>%
 Fig_2b_bottom
 
 # 5. Save relevant data ####
-ID_dens %>% write_rds(here("Biochemistry", "Phenol", "RDS", "ID_dens.rds"))
-phenol_prior_posterior %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_prior_posterior.rds"))
-phenol_diff %>% write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_diff.rds"))
+phenol %>%
+  select(Treatment, Season, Individual, ID, Samples_Data, Samples_Data_Summary) %>%
+  write_rds(here("Biochemistry", "Phenol", "RDS", "phenol.rds"))
+phenol_ID_dens %>% 
+  write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_ID_dens.rds"))
+phenol_prior_posterior %>% 
+  write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_prior_posterior.rds"))
+phenol_diff %>% 
+  write_rds(here("Biochemistry", "Phenol", "RDS", "phenol_diff.rds"))

@@ -866,6 +866,9 @@ chrome_print(
 
 
 
+# 3.8 Clean up ####
+rm(pigments_gt, pigments_summary)
+
 # 4. Technical triplicate models ####
 # 4.1 Sum pheopigments ####
 pigments %<>% 
@@ -1242,7 +1245,7 @@ pigments %<>%
         ~ .x %>%
           mutate(Total = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 ))
       ),
-    Samples_Data = Technical_Chl_Posterior %>%
+    Samples_Data = Technical_Chl_Posterior %>% # Join posteriors.
       map2(
         Technical_Pheo_Posterior,
         ~ .x %>% 
@@ -1367,6 +1370,17 @@ pigments %<>%
       )
   )
 
+# 4.7.4 Clean up ####
+pigments %<>% 
+  select(-c(Technical_Chl_Plot, Technical_Pheo_Plot, Technical_Total_Plot,
+            Technical_Chl_Samples, Technical_Pheo_Samples, Technical_Total_Samples,
+            Technical_Chl_Chains, Technical_Pheo_Chains, Technical_Total_Chains,
+            Technical_Chl_Prior, Technical_Pheo_Prior, Technical_Total_Prior,
+            Technical_Chl_Posterior, Technical_Pheo_Posterior, Technical_Total_Posterior,
+            Technical_Chl_Prior_Posterior, Technical_Pheo_Prior_Posterior, 
+            Technical_Total_Prior_Posterior, Technical_Chl_Prediction, 
+            Technical_Pheo_Prediction, Technical_Total_Prediction))
+
 # 5. Pigment models ####
 # 5.1 Total pigment ####
 # 5.1.1 Visualise ####
@@ -1378,37 +1392,38 @@ pigments %<>%
       stat_slab(n = 2e3, height = 10, 
                 colour = "black", linewidth = 0.1) +
       facet_grid(rows = vars(Name), scales = "free") +
-      coord_cartesian(xlim = c(0, 2)) +
+      coord_cartesian(xlim = c(0, 3)) +
       theme_minimal() +
       theme(panel.grid = element_blank()) ) %>%
-  ggsave(filename = "samples_data.pdf", device = cairo_pdf, 
+  ggsave(filename = "samples_total_data.pdf", device = cairo_pdf, 
          path = here("Biochemistry", "Pigments", "Plots"),
          height = 40, width = 20, units = "cm")
 
 ( pigments %>%
     select(Name, ID, Samples_Data_Summary) %>%
     unnest(cols = Samples_Data_Summary) %>%
-    ggplot(aes(Concentration_mean, ID)) +
+    ggplot(aes(Total_mean, ID)) +
       geom_vline(xintercept = 0) +
-      geom_pointrange(aes(xmin = Concentration_mean - Concentration_sd,
-                          xmax = Concentration_mean + Concentration_sd)) +
+      geom_pointrange(aes(xmin = Total_mean - Total_sd,
+                          xmax = Total_mean + Total_sd)) +
       facet_grid(rows = vars(Name), scales = "free") +
-      coord_cartesian(xlim = c(0, 2)) +
+      coord_cartesian(xlim = c(0, 3)) +
       theme_minimal() +
       theme(panel.grid = element_blank()) ) %>%
-  ggsave(filename = "samples_data_summary.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
+  ggsave(filename = "samples_total_data_summary.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
          height = 40, width = 20, units = "cm")
 
 # Here are the data I'll pass to the model:
 pigments %>%
   select(Treatment, Season, Individual, Samples_Data_Summary) %>%
   unnest(cols = Samples_Data_Summary) %>%
+  select(Treatment, Season, Individual, Total_mean, Total_sd) %>%
   print(n = 79)
 
 # 5.1.2 Prior simulation ####
 # Total photosynthetic pigment content for Laminaria hyperborea is
-# exprected between 1.95963 ± 0.10126 mg g^-1 (Wright & Foggo 2021,
+# expected between 1.95963 ± 0.10126 mg g^-1 (Wright & Foggo 2021,
 # doi: 10.3354/meps13886) and 1.27 mg g^-1 (Wright & Kregting 2023,
 # doi: 10.1007/s00227-023-04289-y), so around 1.6 mg g^-1.
 
@@ -1420,29 +1435,29 @@ tibble(n = 1:1e5,
   pivot_longer(cols = c(mu, P), 
                names_to = "parameter", values_to = "value") %>%
   ggplot(aes(value, parameter)) +
-    geom_vline(xintercept = c(0, 2)) +
     stat_slab(alpha = 0.5, height = 2, n = 3e3) +
     coord_cartesian(expand = F,
-                    xlim = c(-1, 3)) +
+                    xlim = c(-1, 5)) +
     theme_minimal() +
     theme(panel.grid = element_blank())
 # Looks reasonable.
 
-# 4.4 Stan models ####
-phenol_c_model <- here("Biochemistry", "Phenol", "Stan", "phenol_c.stan") %>% 
+# 5.1.3 Stan models ####
+total_c_s2z_model <- here("Biochemistry", "Pigments", "Stan", "total_c_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-phenol_nc_model <- here("Biochemistry", "Phenol", "Stan", "phenol_nc.stan") %>% 
+total_nc_s2z_model <- here("Biochemistry", "Pigments", "Stan", "total_nc_s2z.stan") %>% 
   read_file() %>%
   write_stan_file() %>%
   cmdstan_model()
 
-phenol_c_samples <- phenol_c_model$sample(
-          data = phenol %>%
+total_c_s2z_samples <- total_c_s2z_model$sample(
+          data = pigments %>%
             select(Treatment, Season, Individual, Samples_Data_Summary) %>%
             unnest(cols = Samples_Data_Summary) %>%
+            select(Treatment, Season, Individual, Total_mean, Total_sd) %>%
             compose_data(),
           chains = 8,
           parallel_chains = parallel::detectCores(),
@@ -1450,10 +1465,11 @@ phenol_c_samples <- phenol_c_model$sample(
           iter_sampling = 1e4,
         )
 
-phenol_nc_samples <- phenol_nc_model$sample(
-          data = phenol %>%
+total_nc_s2z_samples <- total_nc_s2z_model$sample(
+          data = pigments %>%
             select(Treatment, Season, Individual, Samples_Data_Summary) %>%
             unnest(cols = Samples_Data_Summary) %>%
+            select(Treatment, Season, Individual, Total_mean, Total_sd) %>%
             compose_data(),
           chains = 8,
           parallel_chains = parallel::detectCores(),
@@ -1461,25 +1477,416 @@ phenol_nc_samples <- phenol_nc_model$sample(
           iter_sampling = 1e4,
         )
 
-# 4.5 Model checks ####
-# 4.5.1 Rhat ####
-phenol_c_samples$summary() %>%
+# 5.1.4 Model checks ####
+# 5.1.4.1 Rhat ####
+total_c_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# All rhat above 1.001. rhat = 1.03 ± 0.0207.
+# Half of rhat above 1.001. rhat = 1.00 ± 0.00230.
 
-phenol_nc_samples$summary() %>%
+total_nc_s2z_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# Most rhat above 1.001. rhat = 1.00 ± 0.00224.
+# More than half of rhat above 1.001. rhat = 1.00 ± 0.00138.
 
 # Plot comparison between centred and non-centred parameterisation.
-phenol_nc_samples$summary() %>%
-  left_join(phenol_c_samples$summary(),
+total_nc_s2z_samples$summary() %>%
+  left_join(total_c_s2z_samples$summary(),
+            by = "variable") %>%
+  rename(rhat_nc = rhat.x, rhat_c = rhat.y) %>%
+  ggplot(aes(rhat_c, rhat_nc)) +
+    geom_abline(slope = 1) +
+    geom_point() +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Warning because z-scores are dropped as they have no equivalent in
+# the centred parameteristion. Models converged similarly.
+
+# 5.1.4.2 Chains ####
+total_c_s2z_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "total_c_s2z_chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look good.
+
+total_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "total_nc_s2z_chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look better.
+
+# 5.1.4.3 Pairs ####
+total_c_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_i[1,1]", "sigma_i[1]", 
+                      "theta[1]"))
+
+total_c_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_i[2,1]", "sigma_i[2]", 
+                      "theta[2]"))
+
+total_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_i[1,1]", "sigma_i[1]", 
+                      "theta[1]"))
+
+total_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_i[2,1]", "sigma_i[2]", 
+                      "theta[2]"))
+# Both models yield pretty similar results.
+
+# 5.1.5 Prior-posterior comparison ####
+# 5.1.5.1 Sample priors ####
+total_c_s2z_prior <- prior_samples(
+  model = total_c_s2z_model,
+  data = pigments %>%
+    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    select(Treatment, Season, Individual, Total_mean, Total_sd) %>%
+    compose_data()
+  )
+
+total_nc_s2z_prior <- prior_samples(
+  model = total_nc_s2z_model,
+  data = pigments %>%
+    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    select(Treatment, Season, Individual, Total_mean, Total_sd) %>%
+    compose_data()
+)
+
+# 5.1.5.2 Plot prior-posterior comparison ####
+total_c_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = total_c_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Individual),
+    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "theta[Treatment]"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
+
+total_nc_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = total_nc_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Individual),
+    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
+                   "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "theta[Treatment]"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
+# Very similar posteriors. I will go with the non-centred models because
+# of the better chains.
+
+# 5.1.6 Prediction ####
+# 5.1.6.1 Combine relevant priors and posteriors ####
+total_prior_posterior <- total_nc_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = total_nc_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment),
+    parameters = c("alpha_t[Treatment]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "theta[Treatment]"),
+    format = "short"
+  )
+
+# 5.1.6.2 Calculate predictions for new seasons and sporophytes ####
+total_prior_posterior %<>%
+  mutate(mu = exp( alpha_t ),
+         obs = rgamma( n() , mu / theta , 1 / theta ),
+         mu_new = exp( alpha_t + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_i ) ),
+         obs_new = rgamma( n() , mu_new / theta , 1 / theta ))
+
+# 5.1.6.3 Remove redundant prior ####
+total_prior_posterior %<>% # priors are identical for both treatments ->
+  filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
+  mutate(Treatment = if_else(distribution == "prior", # add Prior to treatment
+                             "Prior", Treatment) %>% fct()) %>%
+  select(-distribution)
+
+# 5.1.6.4 Plot predictions ####
+total_prior_posterior %>%
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Total", names_to = "Level") %>%
+  filter(Level %in% c("mu_new", "obs_new")) %>%
+  ggplot(aes(Total, Treatment, alpha = Level)) +
+    geom_density_ridges(from = 0, to = 3) +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# For both treatments, mu and observations are practically identical.
+
+total_prior_posterior %>%
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Total", names_to = "Level") %>%
+  filter(Level %in% c("mu", "mu_new")) %>%
+  ggplot(aes(Total, Treatment, alpha = Level)) +
+    geom_density_ridges(from = 0, to = 3) +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Season and individual add a lot of variability to both means.
+
+# 5.1.6.5 Calculate difference ####
+total_diff <- total_prior_posterior %>%
+  filter(Treatment != "Prior") %>%
+  droplevels() %>%
+  select(-c(alpha_t, sigma_s, sigma_i, theta)) %>%
+  pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
+  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
+         obs = obs_Kelp - obs_Faeces,
+         mu_new = mu_new_Kelp - mu_new_Faeces,
+         obs_new = obs_new_Kelp - obs_new_Faeces) %>%
+  select(.chain, .iteration, .draw, mu, obs, mu_new, obs_new) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = "Parameter",
+               values_to = "Difference")
+
+# 5.1.6.6 Plot difference ####
+total_diff %>%
+  ggplot(aes(Difference, Parameter)) +
+    geom_density_ridges(from = -1, to = 1) +
+    geom_vline(xintercept = 0) +
+    scale_x_continuous(limits = c(-1, 1), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+# 5.1.6.7 Summarise difference ####
+total_diff_summary <- total_diff %>%
+  group_by(Parameter) %>%
+  summarise(mean = mean(Difference),
+            sd = sd(Difference),
+            P = mean(Difference > 0),
+            n = length(Difference)) %T>%
+  print()
+# There is only a 63-64% chance that new means and observations 
+# are different between treatments.
+
+# 5.1.6.8 Add labels to phenol_diff ####
+total_diff %<>%
+  left_join(total_diff_summary %>%
+              select(Parameter, P), 
+            by = "Parameter") %>%
+  mutate(label_Kelp = ( P * 100 ) %>% 
+           signif(digits = 2) %>% 
+           str_c("%"),
+         label_Faeces = ( (1 - P) * 100 ) %>% 
+           signif(digits = 2) %>% 
+           str_c("%"))
+
+
+# 5.2 Chlorophyll vs. pheopigments ####
+# 5.2.1 Visualise ####
+( pigments %>%
+    select(Name, ID, Samples_Data) %>%
+    unnest(cols = Samples_Data) %>%
+    ggplot(aes(Chlorophyll, ID)) +
+      geom_vline(xintercept = 0) +
+      stat_slab(n = 2e3, height = 10, 
+                colour = "black", linewidth = 0.1) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "samples_chl_data.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 20, units = "cm")
+
+( pigments %>%
+    select(Name, ID, Samples_Data) %>%
+    unnest(cols = Samples_Data) %>%
+    ggplot(aes(Pheopigments, ID)) +
+      geom_vline(xintercept = 0) +
+      stat_slab(n = 2e3, height = 10, 
+                colour = "black", linewidth = 0.1) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "samples_pheo_data.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 20, units = "cm")
+
+( pigments %>%
+    select(Name, ID, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    ggplot(aes(Chlorophyll_mean, ID)) +
+      geom_vline(xintercept = 0) +
+      geom_pointrange(aes(xmin = Chlorophyll_mean - Chlorophyll_sd,
+                          xmax = Chlorophyll_mean + Chlorophyll_sd)) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "samples_chl_data_summary.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 20, units = "cm")
+
+( pigments %>%
+    select(Name, ID, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    ggplot(aes(Pheopigments_mean, ID)) +
+      geom_vline(xintercept = 0) +
+      geom_pointrange(aes(xmin = Pheopigments_mean - Pheopigments_sd,
+                          xmax = Pheopigments_mean + Pheopigments_sd)) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 2)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "samples_pheo_data_summary.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 20, units = "cm")
+# Individual variables look fine but the trends are not very clear, so 
+# I want to model the proportion of healthy vs. degraded chlorophyll a, 
+# i.e. chlorophyll / (chlorophyll + pheopigments).
+
+( pigments %>%
+    select(Name, ID, Samples_Data) %>%
+    unnest(cols = Samples_Data) %>%
+    ggplot(aes(Chlorophyll / (Chlorophyll + Pheopigments), ID)) +
+      geom_vline(xintercept = 0) +
+      stat_slab(n = 2e3, height = 10, 
+                colour = "black", linewidth = 0.1) +
+      facet_grid(rows = vars(Name), scales = "free") +
+      coord_cartesian(xlim = c(0, 1)) +
+      theme_minimal() +
+      theme(panel.grid = element_blank()) ) %>%
+  ggsave(filename = "samples_chlvspheo_data.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 20, units = "cm")
+# These are proportions, i.e. bounded by 0 and 1, but the measurement 
+# error is actually fairly normal, so could be approximated with
+# mean and standard deviation.
+
+# Here are the data I'll pass to the model:
+pigments %>%
+  select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+  unnest(cols = Samples_Data_Summary) %>%
+  select(Treatment, Season, Individual, 
+         Chlorophyll_mean, Chlorophyll_sd,
+         Pheopigments_mean, Pheopigments_sd) %>%
+  print(n = 79)
+
+# 5.2.2 Prior simulation ####
+# Chlorophyll a for Laminaria hyperborea is expected between 
+# 1.06961 ± 0.05854 mg g^-1 (Wright & Foggo 2021, doi: 
+# 10.3354/meps13886) and 0.67 mg g^-1 (Wright & Kregting 2023,
+# doi: 10.1007/s00227-023-04289-y), so around 0.87 mg g^-1.
+# There are limited data on pheophytin and no data on pheophorbide,
+# which are usually assumed to be zero. It probably makes sense to 
+# put the same prior on chlorophyll and pheopigments and for want
+# of a better option I will use one centred on 0.87 mg g^-1. For
+# The beta likelihood modelling the proportion of intact chlorophyll,
+# I have no prior knowledge so will centre on 0.5 with adequate
+# uncertainty.
+
+tibble(n = 1:1e5,
+       mu_logit = rnorm( 1e5 , log( 0.5 / (1 - 0.5) ) , 1 ),
+       mu = 1 / ( 1 + exp(-mu_logit) ),
+       nu = rgamma( 1e5 , 30^2 / 20^2 , 30 / 20^2 ),
+       sigma = sqrt( mu * ( 1 - mu ) / ( 1 + nu ) ),
+       p = rbeta( 1e5 , mu * nu , (1 - mu) * nu )) %>% # %$% hist(sigma)
+  pivot_longer(cols = c(mu, p), 
+               names_to = "parameter", values_to = "value") %>%
+  ggplot(aes(value, parameter)) +
+  stat_slab(alpha = 0.5, height = 2, n = 3e3) +
+  coord_cartesian(expand = F,
+                  xlim = c(0, 1)) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+# Looks reasonable.
+
+# 5.2.3 Stan models ####
+chlvspheo_c_s2z_model <- here("Biochemistry", "Pigments", "Stan", "chlvspheo_c_s2z.stan") %>% 
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+chlvspheo_nc_s2z_model <- here("Biochemistry", "Pigments", "Stan", "chlvspheo_nc_s2z.stan") %>% 
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+chlvspheo_c_s2z_samples <- chlvspheo_c_s2z_model$sample(
+          data = pigments %>%
+            select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            select(Treatment, Season, Individual, 
+                   Chlorophyll_mean, Chlorophyll_sd,
+                   Pheopigments_mean, Pheopigments_sd) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+
+chlvspheo_nc_s2z_samples <- chlvspheo_nc_s2z_model$sample(
+          data = pigments %>%
+            select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+            unnest(cols = Samples_Data_Summary) %>%
+            select(Treatment, Season, Individual, 
+                   Chlorophyll_mean, Chlorophyll_sd,
+                   Pheopigments_mean, Pheopigments_sd) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4,
+        )
+
+# 5.2.4 Model checks ####
+# 5.2.4.1 Rhat ####
+chlvspheo_c_s2z_samples$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# Less than 40% of rhat above 1.001. rhat = 1.00 ± 0.00209.
+
+chlvspheo_nc_s2z_samples$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# Less than 2% of rhat above 1.001. rhat = 1.00 ± 0.000184.
+
+# Plot comparison between centred and non-centred parameterisation.
+chlvspheo_nc_s2z_samples$summary() %>%
+  left_join(chlvspheo_c_s2z_samples$summary(),
             by = "variable") %>%
   rename(rhat_nc = rhat.x, rhat_c = rhat.y) %>%
   ggplot(aes(rhat_c, rhat_nc)) +
@@ -1490,29 +1897,476 @@ phenol_nc_samples$summary() %>%
 # Warning because z-scores are dropped as they have no equivalent in
 # the centred parameteristion. The non-centred model is better.
 
-# 4.5.2 Chains ####
-phenol_c_samples$draws(format = "df") %>%
+# 5.2.4.2 Chains ####
+chlvspheo_c_s2z_samples$draws(format = "df") %>%
   mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_c_chains.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
-         height = 40, width = 40, units = "cm")
-# Chains look ok.
-
-phenol_nc_samples$draws(format = "df") %>%
-  mcmc_rank_overlay() %>%
-  ggsave(filename = "phenol_nc_chains.pdf", device = cairo_pdf, 
-         path = here("Biochemistry", "Phenol", "Plots"),
+  ggsave(filename = "chlvspheo_c_s2z_chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
          height = 40, width = 40, units = "cm")
 # Chains look good.
 
-# 4.5.3 Pairs ####
-phenol_c_samples$draws(format = "df") %>%
+chlvspheo_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "chlvspheo_nc_s2z_chains.pdf", device = cairo_pdf, 
+         path = here("Biochemistry", "Pigments", "Plots"),
+         height = 40, width = 40, units = "cm")
+# Chains look even better.
+
+# 5.2.4.3 Pairs ####
+chlvspheo_c_s2z_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_t[1]", 
                       "alpha_s[1,1]", "sigma_s[1]",
                       "alpha_i[1,1]", "sigma_i[1]", 
-                      "theta[1]"))
-# Correlation between alpha_t and alpha_s for Treatment 1 (Faeces).
-# alpha_s is being pulled far away from its zero mean and there is
-# a strong inflation of sigma_s.
-# 5.2 Chlorophyll vs. Pheopigments ####
+                      "nu[1]"))
 
+chlvspheo_c_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_i[2,1]", "sigma_i[2]", 
+                      "nu[2]"))
+
+chlvspheo_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[1]", 
+                      "alpha_s[1,1]", "sigma_s[1]",
+                      "alpha_i[1,1]", "sigma_i[1]", 
+                      "nu[1]"))
+
+chlvspheo_nc_s2z_samples$draws(format = "df") %>%
+  mcmc_pairs(pars = c("alpha_t[2]", 
+                      "alpha_s[2,1]", "sigma_s[2]",
+                      "alpha_i[2,1]", "sigma_i[2]", 
+                      "nu[2]"))
+# No correlations. A bit of a weird pattern going on between
+# sigma_i and nu for Kelp. Generally looks fine for both models.
+
+# 5.2.5 Prior-posterior comparison ####
+# 5.2.5.1 Sample priors ####
+chlvspheo_c_s2z_prior <- prior_samples(
+  model = chlvspheo_c_s2z_model,
+  data = pigments %>%
+    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    select(Treatment, Season, Individual, 
+           Chlorophyll_mean, Chlorophyll_sd,
+           Pheopigments_mean, Pheopigments_sd) %>%
+    compose_data()
+  )
+
+chlvspheo_nc_s2z_prior <- prior_samples(
+  model = chlvspheo_nc_s2z_model,
+  data = pigments %>%
+    select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+    unnest(cols = Samples_Data_Summary) %>%
+    select(Treatment, Season, Individual, 
+           Chlorophyll_mean, Chlorophyll_sd,
+           Pheopigments_mean, Pheopigments_sd) %>%
+    compose_data()
+)
+
+# 5.2.5.2 Plot prior-posterior comparison ####
+chlvspheo_c_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = chlvspheo_c_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Individual),
+    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_i[Treatment, Individual]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "nu[Treatment]"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
+
+chlvspheo_nc_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = chlvspheo_nc_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment, Season, Individual),
+    parameters = c("alpha_t[Treatment]", "alpha_s[Treatment, Season]", 
+                   "alpha_i[Treatment, Individual]", "z_s[Treatment, Season]", 
+                   "z_i[Treatment, Individual]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "nu[Treatment]"),
+    format = "long"
+    ) %T>%
+  { prior_posterior_plot(., group_name = "Treatment", ridges = FALSE) %>%
+      print() } %T>%
+  { prior_posterior_plot(., group_name = "Season", ridges = FALSE) %>%
+      print() } %>%
+  prior_posterior_plot(group_name = "Individual", ridges = FALSE)
+# Very similar posteriors. I will go with the non-centred models because
+# of the better chains and rhat.
+
+# 5.2.6 Prediction ####
+# 5.2.6.1 Combine relevant priors and posteriors ####
+chlvspheo_prior_posterior <- chlvspheo_nc_s2z_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = chlvspheo_nc_s2z_samples,
+    group = pigments %>%
+      select(Treatment, Season, Individual, Samples_Data_Summary) %>%
+      unnest(cols = Samples_Data_Summary) %>%
+      select(Treatment),
+    parameters = c("alpha_t[Treatment]", "sigma_s[Treatment]", 
+                   "sigma_i[Treatment]", "nu[Treatment]"),
+    format = "short"
+  )
+
+# 5.2.6.2 Calculate predictions for new seasons and sporophytes ####
+chlvspheo_prior_posterior %<>%
+  mutate(mu = 1 / ( 1 + exp( -alpha_t ) ), # inverse logit (logit = log(p / (1 - p)))
+         obs = rbeta( n() , mu * nu , (1 - mu) * nu ),
+         mu_new = 1 / ( 1 + exp( -( alpha_t + rnorm( n() , 0 , sigma_s ) + rnorm( n() , 0 , sigma_i ) ) ) ),
+         obs_new = rbeta( n() , mu_new * nu , (1 - mu_new) * nu ))
+
+# 5.2.6.3 Remove redundant prior ####
+chlvspheo_prior_posterior %<>% # priors are identical for both treatments ->
+  filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
+  mutate(Treatment = if_else(distribution == "prior", # add Prior to treatment
+                             "Prior", Treatment) %>% fct()) %>%
+  select(-distribution)
+
+# 5.2.6.4 Plot predictions ####
+chlvspheo_prior_posterior %>%
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Proportion", names_to = "Level") %>%
+  filter(Level %in% c("mu_new", "obs_new")) %>%
+  ggplot(aes(Proportion, Treatment, alpha = Level)) +
+    geom_density_ridges(from = 0, to = 1) +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+chlvspheo_prior_posterior %>%
+  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
+               values_to = "Proportion", names_to = "Level") %>%
+  filter(Level %in% c("mu", "mu_new")) %>%
+  ggplot(aes(Proportion, Treatment, alpha = Level)) +
+    geom_density_ridges(from = 0, to = 1) +
+    scale_alpha_manual(values = c(0.8, 0.2)) +
+    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Season and individual add a lot of variability to both means.
+
+# 5.2.6.5 Convert to percentage ####
+chlvspheo_prior_posterior %<>%
+  mutate(mu = mu * 100,
+         obs = obs * 100,
+         mu_new = mu_new * 100,
+         obs_new = obs_new * 100)
+
+# 5.2.6.6 Calculate difference ####
+chlvspheo_diff <- chlvspheo_prior_posterior %>%
+  filter(Treatment != "Prior") %>%
+  droplevels() %>%
+  select(-c(alpha_t, sigma_s, sigma_i, nu)) %>%
+  pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
+  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
+         obs = obs_Kelp - obs_Faeces,
+         mu_new = mu_new_Kelp - mu_new_Faeces,
+         obs_new = obs_new_Kelp - obs_new_Faeces) %>%
+  select(.chain, .iteration, .draw, mu, obs, mu_new, obs_new) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = "Parameter",
+               values_to = "Difference")
+
+# 5.2.6.7 Plot difference ####
+chlvspheo_diff %>%
+  ggplot(aes(Difference, Parameter)) +
+    geom_density_ridges(from = -80, to = 80) +
+    geom_vline(xintercept = 0) +
+    scale_x_continuous(limits = c(-80, 80), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+# 5.2.6.8 Summarise difference ####
+chlvspheo_diff_summary <- chlvspheo_diff %>%
+  group_by(Parameter) %>%
+  summarise(mean = mean(Difference),
+            sd = sd(Difference),
+            P = mean(Difference > 0),
+            n = length(Difference)) %T>%
+  print()
+
+# 5.2.6.9 Add labels to phenol_diff ####
+chlvspheo_diff %<>%
+  left_join(chlvspheo_diff_summary %>%
+              select(Parameter, P), 
+            by = "Parameter") %>%
+  mutate(label_Kelp = ( P * 100 ) %>% 
+           signif(digits = 2) %>% 
+           str_c("%"),
+         label_Faeces = ( (1 - P) * 100 ) %>% 
+           signif(digits = 2) %>% 
+           str_c("%"))
+
+# 6. Visualisation ####
+# 6.1 Calculate densities ####
+total_ID_dens <- pigments %>%
+  select(Treatment, Season, Individual, ID, Samples_Data) %>%
+  unnest(cols = Samples_Data) %>%
+  select(-c(Chlorophyll, Pheopigments)) %>%
+  group_by(Treatment, Season, ID) %>%
+  reframe(x = density(Total, n = 2^10, from = 0, to = 3)$x, # computation range is limited and
+          y = density(Total, n = 2^10, from = 0, to = 3)$y) # n is increased to improve KDE
+
+chlvspheo_ID_dens <- pigments %>%
+  select(Treatment, Season, Individual, ID, Samples_Data) %>%
+  unnest(cols = Samples_Data) %>%
+  mutate(Proportion = Chlorophyll / ( Chlorophyll + Pheopigments ) * 100) %>%
+  select(-c(Total, Chlorophyll, Pheopigments)) %>%
+  group_by(Treatment, Season, ID) %>%
+  reframe(x = density(Proportion, n = 2^10, from = 0, to = 100)$x,
+          y = density(Proportion, n = 2^10, from = 0, to = 100)$y)
+
+# 6.2 Manipulate densities ####
+# Rescale
+total_ID_dens %<>%
+  group_by(ID) %>%
+  mutate(y_area = y * 0.01 / ( sum(y) * ( x[2] - x[1] ) ), # Riemann sum
+         y_height = y * 0.05 / max(y)) %>%
+  ungroup()
+
+chlvspheo_ID_dens %<>%
+  group_by(ID) %>%
+  mutate(y_area = y * 0.7 / ( sum(y) * ( x[2] - x[1] ) ),
+         y_height = y * 0.1 / max(y)) %>%
+  ungroup()
+
+# Trim
+total_ID_dens %<>% filter(y > 0.1)
+chlvspheo_ID_dens %<>% filter(y > 0.005)
+
+# Mirror
+total_ID_dens %<>%
+  group_by(Treatment, Season, ID) %>%
+  reframe(x = c(x, x %>% rev()),
+          y = c(y, -y %>% rev()),
+          y_area = c(y_area, -y_area %>% rev()),
+          y_height = c(y_height, -y_height %>% rev())) %>%
+  ungroup()
+
+chlvspheo_ID_dens %<>%
+  group_by(Treatment, Season, ID) %>%
+  reframe(x = c(x, x %>% rev()),
+          y = c(y, -y %>% rev()),
+          y_area = c(y_area, -y_area %>% rev()),
+          y_height = c(y_height, -y_height %>% rev())) %>%
+  ungroup()
+
+# 6.3 Plot ####
+# Update custom theme
+mytheme <- theme(panel.background = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 axis.line = element_line(),
+                 axis.title = element_text(size = 12, hjust = 0),
+                 axis.text = element_text(size = 10, colour = "black"),
+                 axis.ticks.length = unit(.25, "cm"),
+                 axis.ticks = element_line(colour = "black", lineend = "square"),
+                 axis.title.y = element_blank(),
+                 axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(),
+                 axis.line.y = element_blank(),
+                 legend.key = element_blank(),
+                 legend.key.width = unit(.25, "cm"),
+                 legend.key.height = unit(.45, "cm"),
+                 legend.key.spacing.x = unit(.5, "cm"),
+                 legend.key.spacing.y = unit(.05, "cm"),
+                 legend.background = element_blank(),
+                 legend.position = "top",
+                 legend.justification = 0,
+                 legend.text = element_text(size = 12, hjust = 0),
+                 legend.title = element_blank(),
+                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
+                 strip.background = element_blank(),
+                 strip.text = element_text(size = 12, hjust = 0),
+                 panel.spacing = unit(0.6, "cm"),
+                 text = element_text(family = "Futura"))
+
+Fig_2c_left_top <- ggplot() +
+  geom_polygon(data = total_ID_dens %>% # Stratify by Treatment
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.5, 1.5)) %>%
+                 group_by(ID) %>% # Jitter
+                 mutate(y_area = y_area + runif( 1 , -0.35 , 0.35 )),
+               aes(x = x, y = y_area, group = ID, 
+                   fill = Treatment), 
+               alpha = 0.2) +
+  ggpubr::geom_bracket(data = pigments %>%
+                         select(ID, Treatment, Season, Samples_Data_Summary) %>%
+                         unnest(cols = Samples_Data_Summary) %>%
+                         filter(Season == "Spring" & Treatment == "Kelp") %>%
+                         summarise(min = min(Total_mean - Total_sd),
+                                   max = max(Total_mean + Total_sd)),
+                       aes(xmin = min, xmax = max, y.position = 2.5, label = "Spring"),
+                       colour = "#c3b300", size = 0.5, family = "Futura", 
+                       label.size = 3.5, vjust = -1) +
+  # ggforce::geom_mark_ellipse(data = pigments %>%
+  #                              select(ID, Treatment, Season, Samples_Data_Summary) %>%
+  #                              unnest(cols = Samples_Data_Summary) %>%
+  #                              mutate(y = if_else(Treatment == "Faeces", 0.6, 1.6)) %>%
+  #                              group_by(ID) %>%
+  #                              mutate(y = y + runif( 1 , -0.25 , 0.25 )),
+  #                            aes(x = Total_mean, y = y, group = Treatment, 
+  #                                filter = Season == "Spring")) +
+  stat_density_ridges(data = total_prior_posterior %>%
+                        mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
+                      aes(x = obs_new, y = Treatment %>% as.numeric(), 
+                          fill = Treatment), colour = NA, n = 2^10,
+                      from = 0, to = 3, rel_min_height = 0.001, 
+                      bandwidth = 0.05, scale = 2, alpha = 0.6) +
+  scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
+  scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
+                    guide = guide_legend(reverse = TRUE)) +
+  xlab(expression("Total pigment (mg g"^-1*")")) +
+  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  mytheme
+Fig_2c_left_top
+
+require(geomtextpath)
+Fig_2c_left_bottom <- total_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter, 
+                          fill = if_else(after_stat(x) < 0,
+                                         "Faeces", "Kelp")), 
+                      geom = "density_ridges_gradient", n = 2^10,
+                      colour = NA, linewidth = 0, bandwidth = 0.05,
+                      from = -2, to = 2, rel_min_height = 0.001,
+                      scale = 1) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 1.07 + 1,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 1.07 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 1.07 + 1, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.35, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 1.07 + 2, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.32, vjust = 0,
+                   n = 2^10, bw = 0.05, text_only = TRUE) +
+  geom_vline(xintercept = 0) +
+  annotate("text", x = -2, y = c(1, 2), 
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
+  scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+                     breaks = seq(-2, 2, 1),
+                     labels = scales::label_number(style_negative = "minus")) +
+  scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
+                    guide = "none") +
+  xlab(expression("Difference (mg g"^-1*")")) +
+  coord_cartesian(expand = FALSE, clip = "off") +
+  mytheme
+Fig_2c_left_bottom
+
+Fig_2c_right_top <- ggplot() +
+  geom_polygon(data = chlvspheo_ID_dens %>% # Stratify by Treatment
+                 mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.5, 1.5)) %>%
+                 group_by(ID) %>% # Jitter
+                 mutate(y_area = y_area + runif( 1 , -0.35 , 0.35 )),
+               aes(x = x, y = y_area, group = ID, 
+                   fill = Treatment), 
+               alpha = 0.2) +
+  stat_density_ridges(data = chlvspheo_prior_posterior %>%
+                        mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
+                      aes(x = obs_new, y = Treatment %>% as.numeric(), 
+                          fill = Treatment), colour = NA, n = 2^10,
+                      from = 0, to = 100, rel_min_height = 0.001, 
+                      bandwidth = 1.7, scale = 2, alpha = 0.6) +
+  scale_x_continuous(limits = c(0, 100), oob = scales::oob_keep) +
+  scale_fill_manual(values = c("#7030a5", "#c3b300", "#b5b8ba"),
+                    guide = guide_legend(reverse = TRUE)) +
+  xlab(expression("Intact chlorophyll (%)")) +
+  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  mytheme
+Fig_2c_right_top
+
+Fig_2c_right_bottom <- chlvspheo_diff %>% 
+  filter(Parameter %in% c("mu_new", "obs_new")) %>%
+  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  ggplot() +
+  stat_density_ridges(aes(x = Difference, y = Parameter, 
+                          fill = if_else(after_stat(x) < 0,
+                                         "Faeces", "Kelp")), 
+                      geom = "density_ridges_gradient", n = 2^10,
+                      colour = NA, linewidth = 0, bandwidth = 1.7,
+                      from = -80, to = 80, rel_min_height = 0.001,
+                      scale = 1) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 42.5 + 1,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 1.7, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 42.5 + 2,
+                       label = label_Kelp),
+                   colour = "#c3b300", family = "Futura",
+                   size = 3.5, hjust = 0.8, vjust = 0,
+                   n = 2^10, bw = 1.7, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+                   aes(x = Difference, y = after_stat(density) * 42.5 + 1, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.35, vjust = 0,
+                   n = 2^10, bw = 1.7, text_only = TRUE) +
+  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+                   aes(x = Difference, y = after_stat(density) * 42.5 + 2, 
+                       label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
+                   size = 3.5, hjust = 0.32, vjust = 0,
+                   n = 2^10, bw = 1.7, text_only = TRUE) +
+  geom_vline(xintercept = 0) +
+  annotate("text", x = -80, y = c(1, 2),
+           label = c("italic(tilde('y'))", "italic('µ')"),
+           hjust = 0, vjust = 0, family = "Futura", size = 3.5,
+           parse = TRUE) +
+  scale_x_continuous(limits = c(-80, 80), oob = scales::oob_keep,
+                     labels = scales::label_number(style_negative = "minus")) +
+  scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
+                    guide = "none") +
+  xlab("Difference (%)") +
+  coord_cartesian(expand = FALSE, clip = "off") +
+  mytheme
+Fig_2c_right_bottom
+
+# 7. Save relevant data ####
+pigments %>%
+  select(Treatment, Season, Individual, ID, Samples_Data, Samples_Data_Summary) %>%
+  write_rds(here("Biochemistry", "Pigments", "RDS", "pigments.rds"))
+total_ID_dens %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "total_ID_dens.rds"))
+chlvspheo_ID_dens %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "chlvspheo_ID_dens.rds"))
+total_prior_posterior %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "total_prior_posterior.rds"))
+chlvspheo_prior_posterior %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "chlvspheo_prior_posterior.rds"))
+total_diff %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "total_diff.rds"))
+chlvspheo_diff %>% 
+  write_rds(here("Biochemistry", "Pigments", "RDS", "chlvspheo_diff.rds"))
