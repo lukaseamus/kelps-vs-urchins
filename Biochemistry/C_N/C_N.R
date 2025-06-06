@@ -575,7 +575,7 @@ C_prior_posterior <- C_nc_s2z_prior %>%
     format = "short"
   )
 
-# 2.8.2 Calculate predictions for new experiments and tanks ####
+# 2.8.2 Calculate predictions for new seasons and sporophytes ####
 C_prior_posterior %<>%
   mutate(mu = 1 / ( 1 + exp( -alpha_t ) ), # inverse logit (logit = log(p / (1 - p)))
          obs = rbeta( n() , mu * nu , (1 - mu) * nu ),
@@ -1014,7 +1014,7 @@ N_prior_posterior <- N_nc_s2z_prior %>%
     format = "short"
   )
 
-# 3.8.2 Calculate predictions for new experiments and tanks ####
+# 3.8.2 Calculate predictions for new seasons and sporophytes ####
 N_prior_posterior %<>%
   mutate(mu = exp( alpha_t ),
          obs = rgamma( n() , mu / theta , 1 / theta ),
@@ -1433,7 +1433,7 @@ Fig_2a_right_bottom <- C_N_diff %>%
                      labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.6), alpha("#c3b300", 0.6)),
                     guide = "none") +
-  xlab("Difference (%)") +
+  xlab("Difference") +
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme
 Fig_2a_right_bottom
