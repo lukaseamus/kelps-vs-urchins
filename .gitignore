@@ -55,5 +55,8 @@ rsconnect/
 .RDataTmp*
 
 # RDS files
-.rds
+*.rds
 RDS
+
+# GIFs
+*.gif
