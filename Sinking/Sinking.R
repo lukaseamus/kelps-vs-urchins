@@ -178,6 +178,8 @@ speed_diff %<>%
            signif(digits = 2) %>% 
            str_c("%"))
 
+# 2. Distance ####
+# 2.1 Load data ####
 distance <- here("Sinking", "Distance.csv") %>% read_csv() %>%
   mutate(Tissue = if_else(particle == "feces", 
                           "Faeces", "Kelp") %>% fct()) %>%
@@ -188,12 +190,22 @@ distance %>%
   ggplot(aes(Distance/2e3, y = Tissue)) +
     geom_density_ridges(bandwidth = 10, from = 0)
 
+# 2.2 Prior simulation ####
+# 2.3 Stan model ####
+# 2.4 Model checks ####
+# 2.5 Prior-posterior comparison ####
+# 2.6 Prediction ####
 
 
 
-# 2. Depth ####
+# 3. Depth ####
+# 3.2 Prior simulation ####
+# 3.3 Stan model ####
+# 3.4 Model checks ####
+# 3.5 Prior-posterior comparison ####
+# 3.6 Prediction ####
 
-# 3. Supplementary figure ####
+# 4. Supplementary figure ####
 # Define custom theme
 mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
@@ -286,7 +298,7 @@ Fig_S5a_bottom <- speed_diff %>%
 Fig_S5a_bottom
 
 
-# 4. Save relevant data ####
+# 5. Save relevant data ####
 speed %>%
   write_rds(here("Sinking", "RDS", "speed.rds"))
 speed_prior_posterior %>% 
