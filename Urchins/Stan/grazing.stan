@@ -1,7 +1,7 @@
 data{
   int n;
-  vector[n] Consumption_c;
-  vector[n] Defecation;
+  vector<lower=0>[n] Consumption;
+  vector<lower=0>[n] Defecation;
   array[n] int Season;
   int n_Season;
 }
@@ -23,10 +23,10 @@ parameters{
 
 model{
   // Hyperpriors
-  alpha_mu ~ gamma( square(2.34) / square(0.8) , 2.34 / square(0.8) );
-  alpha_theta ~ exponential( 1 );
-  beta_mu ~ beta( 0.352 * 8 , (1 - 0.352) * 8 );
-  beta_nu ~ gamma( square(30) / square(20) , 30 / square(20) );
+  alpha_mu ~ gamma( square(1) / square(0.5) , 1 / square(0.5) );
+  alpha_theta ~ exponential( 5 );
+  beta_mu ~ beta( 0.352 * 20 , (1 - 0.352) * 20 );
+  beta_nu ~ gamma( square(15) / square(10) , 15 / square(10) );
   
   // Seasonal priors
   alpha ~ gamma( alpha_mu / alpha_theta , 1 / alpha_theta );
@@ -36,7 +36,7 @@ model{
   sigma ~ exponential( 1 );
   
   // Model
-  vector[n] mu = alpha[Season] + beta[Season] .* Consumption_c;
+  vector[n] mu = alpha[Season] + beta[Season] .* Consumption;
 
   // Truncated Gaussian likelihood
   Defecation ~ normal( mu , sigma ) T[0,];

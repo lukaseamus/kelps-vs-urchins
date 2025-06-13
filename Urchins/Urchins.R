@@ -133,44 +133,53 @@ grazing %<>%
          RGR = ( Urchins_Final - Urchins_Initial ) / Urchins_Initial * 100 / 
            Urchins_Days) # Growth (% d^-1)
 
-# 2. Defecation model ####
+# 2. Grazing model ####
 # 2.1 Prior simulation ####
 # The relationship between consumption and defecation is the defecated proportion.
 # This is available in the literature from Sauchyn & Scheibling 2009, doi
 # 10.3354/meps08296, who report 64.8 ± 3% absorption for the S. droebachiensis.
 # So my prior for the slope beta is centred on 0.352. beta has to be between 0
 # and 1 because there cannot be a negative relationship between consumption and
-# defecation and defecation cannot exceed consumption. The y intercept could
-# be positive (defecation of previous consumption without new consumption) or
-# negative (consumption without defecation due to digestive lag), so it's more
-# informative to parameterise alpha as the defecation at mean consumption by
-# centring the predictor variable consumption. Sauchyn & Scheibling 2009 report
-# lab consumption and defecation rates for clean kelp as 14.87 and 2.34 mg g^-1 d^-1.
-# alpha can then only take positive values and should be centred on 2.34. I will 
-# use partial pooling across seasons for both parameters.
+# defecation and defecation cannot exceed consumption. 
 
-grazing %<>% # Centre predictor variable consumption
-  mutate(Consumption_c = Consumption - mean(Consumption))
+# The y intercept can only be positive (defecation without new consumption) because 
+# negative (consumption without defecation) would imply digestive lag which is
+# hardly possible for S. droebachiensis which retains food for only about 2 days,
+# much shorter than the sampling experimental duration (3.8-12 days). While it's 
+# also possible to parameterise alpha as the defecation at mean consumption by
+# centring the predictor variable and this would be better for setting priors and
+# sampling, I think not centring affords more control over the prediction. 
+# Sauchyn & Scheibling 2009 report lab consumption and defecation rates for clean 
+# kelp as 14.87 and 2.34 mg g^-1 d^-1. I can thus assume that defecation without 
+# additional consumption (alpha) should be expected between 0 and 2.34 mg g^-1 d^-1,
+# so a gamma distribution centred on 1 mg g^-1 d^-1 would be good. 
+
+# I will use partial pooling across seasons for both parameters.
+
+# Complete cases
+grazing_cc <- grazing %>% 
+  select(Season, Consumption, Defecation) %>%
+  drop_na()
 
 tibble(n = 1:1e3, # simulate hierachical prior
-       alpha_mu = rgamma( 1e3 , 2.34^2 / 0.8^2 , 2.34 / 0.8^2 ),
-       alpha_theta = rexp( 1e3 , 1 ),
+       alpha_mu = rgamma( 1e3 , 1^2 / 0.5^2 , 1 / 0.5^2 ),
+       alpha_theta = rexp( 1e3 , 5 ),
        alpha = rgamma( 1e3 , alpha_mu / alpha_theta , 1 / alpha_theta ),
-       beta_mu = rbeta( 1e3 , 0.352 * 8 , (1 - 0.352) * 8 ),
-       beta_nu = rgamma( 1e3 , 30^2 / 20^2 , 30 / 20^2 ),
+       beta_mu = rbeta( 1e3 , 0.352 * 20 , (1 - 0.352) * 20 ),
+       beta_nu = rgamma( 1e3 , 15^2 / 10^2 , 15 / 10^2 ),
        beta = rbeta( 1e3 , beta_mu * beta_nu , (1 - beta_mu) * beta_nu )) %>% # %$% hist(beta)
-  expand_grid(Consumption_c = grazing %$% 
-                seq(min(Consumption_c), max(Consumption_c), length.out = 50)) %>%
-  mutate(Defecation = alpha + beta * Consumption_c) %>%
-  ggplot(aes(Consumption_c, Defecation, group = n)) +
-    geom_hline(yintercept = grazing %>% 
-                 drop_na(Defecation) %$% 
+  expand_grid(Consumption = grazing_cc %$% 
+                seq(min(Consumption), max(Consumption), length.out = 50)) %>%
+  mutate(Defecation = alpha + beta * Consumption) %>%
+  ggplot(aes(Consumption, Defecation, group = n)) +
+    geom_hline(yintercept = grazing_cc %$% 
                  range(Defecation)) +
     geom_line(alpha = 0.05) +
-    coord_cartesian(ylim = c(0, 4), expand = F, clip = "off") +
+    coord_cartesian(ylim = c(0, 5), expand = F, clip = "off") +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# Covers all reasonable possibilities.
+# Covers all possibilities and beyond. I can already see that the prior for
+# beta is an overestimate for my data.
 
 # 2.2 Stan model ####
 require(cmdstanr)
@@ -181,14 +190,11 @@ grazing_model <- here("Urchins", "Stan", "grazing.stan") %>%
 
 require(tidybayes)
 grazing_samples <- grazing_model$sample(
-          data = grazing %>%
-            select(Consumption_c, Defecation, Season) %>%
-            drop_na() %>%
-            compose_data(),
+          data = grazing_cc %>% compose_data(),
           chains = 8,
           parallel_chains = parallel::detectCores(),
           iter_warmup = 1e4,
-          iter_sampling = 1e4,
+          iter_sampling = 1e4
         )
 
 # 2.3 Model checks ####
@@ -198,7 +204,7 @@ grazing_samples$summary() %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# No rhat above 1.001. rhat = 1.00 ± 0.0000683.
+# No rhat above 1.001. rhat = 1.00 ± 0.000147.
 
 # Chains
 require(bayesplot)
@@ -209,28 +215,26 @@ grazing_samples$draws(format = "df") %>%
 # Pairs
 grazing_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha_mu", "beta_mu", "sigma"))
+# No correlation.
 
 grazing_samples$draws(format = "df") %>%
   mcmc_pairs(pars = c("alpha[1]", "beta[1]", "sigma"))
-# No correlation.
+# Correlation between alpha and beta as expected because
+# the predictor wasn't centred. However, the sampler can
+# clearly deal with this and it avoid negative mean
+# predictions for defecation.
 
 # 2.4 Prior-posterior comparison ####
 source("functions.R")
 grazing_prior <- prior_samples(
   model = grazing_model,
-  data = grazing %>%
-    select(Consumption_c, Defecation, Season) %>%
-    drop_na() %>%
-    compose_data()
+  data = grazing_cc %>% compose_data()
   )
 
 grazing_prior %>% 
   prior_posterior_draws(
     posterior_samples = grazing_samples,
-    group = grazing %>%
-      select(Consumption_c, Defecation, Season) %>%
-      drop_na() %>%
-      select(Season),
+    group = grazing_cc %>% select(Season),
     parameters = c("alpha_mu", "alpha_theta", "beta_mu", "beta_nu",
                    "alpha[Season]", "beta[Season]", "sigma"),
     format = "long"
@@ -246,9 +250,9 @@ grazing_prior_posterior_hyper <- grazing_prior %>%
     parameters = c("alpha_mu", "alpha_theta", 
                    "beta_mu", "beta_nu", "sigma"),
     format = "short"
-  ) %>% # Calculate predictions for new seasons
-  mutate(alpha_new = rgamma( n() , alpha_mu / alpha_theta , 1 / alpha_theta ),
-         beta_new = rbeta( n() , beta_mu * beta_nu , (1 - beta_mu) * beta_nu ))
+  ) %>% # Calculate predictions for new seasons, i.e. annual.
+  mutate(alpha = rgamma( n() , alpha_mu / alpha_theta , 1 / alpha_theta ),
+         beta = rbeta( n() , beta_mu * beta_nu , (1 - beta_mu) * beta_nu ))
 
 # 2.5.2 Priors and posteriors for seasonal parameters ####
 grazing_prior_posterior_season <- grazing_prior %>% 
@@ -256,60 +260,41 @@ grazing_prior_posterior_season <- grazing_prior %>%
     posterior_samples = grazing_samples,
     parameters = c("alpha[Season]", "beta[Season]", "sigma"),
     format = "short"
-  )
-
-########################################################
-
-# 2.5.3 Spread across predictor ####
-
-# Spread across predictor
-GP_predictions <- GP_prior_posterior %>%
-  left_join(GP_data %>%
-              group_by(Species) %>%
-              summarise(min = min(nP_mean),
-                        max = max(nP_mean)),
-            by = "Species") %>%
-  mutate(min = if_else(is.na(min),
-                       GP_data %$% min(nP_mean),
-                       min),
-         max = if_else(is.na(max),
-                       GP_data %$% max(nP_mean),
-                       max)) %>%
-  rowwise() %>%
-  mutate(nP_mean = list( seq(min, max, length.out = 100) )) %>%
-  select(-c(min, max)) %>%
-  unnest(nP_mean) %>%
-  mutate(mu = G0 + GP * nP_mean,
-         obs = rnorm( n() , mu , sigma ))
-
-GP_predictions_summary <- GP_predictions %>%
-  group_by(Species, nP_mean) %>%
-  reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
-          obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
-  unnest(c(mu, obs), names_sep = "_")
-
-
-# 2.8.3 Remove redundant prior ####
-C_prior_posterior %<>% # priors are identical for both treatments ->
-  filter(!(Treatment == "Faeces" & distribution == "prior")) %>% # remove one
-  mutate(Treatment = if_else(distribution == "prior", # add Prior to treatment
-                             "Prior", Treatment) %>% fct()) %>%
+  ) %>% 
+  # Since I want only one grouping variable, there is redundancy in distribution.
+  filter(!(Season %in% c("Summer", "Spring") & 
+             distribution == "prior")) %>% # Remove two redundant priors.
+  mutate(Season = if_else(distribution == "prior", # Add Prior to Season.
+                          "Prior", Season) %>% fct()) %>%
   select(-distribution)
 
-# 2.8.3 Plot predictions ####
-require(ggridges) # ggridges is better than ggdist for limiting distribution ranges
-C_prior_posterior %>%
-  pivot_longer(cols = c(mu, obs, mu_new, obs_new), 
-               values_to = "C", names_to = "Level") %>%
-  filter(Level %in% c("mu_new", "obs_new")) %>%
-  ggplot(aes(C, Treatment, alpha = Level)) +
-    geom_density_ridges(from = 0, to = 1) +
-    scale_alpha_manual(values = c(0.8, 0.2)) +
-    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
+# 2.5.3 Combine seasonal and hyperparameters ####
+grazing_prior_posterior <- grazing_prior_posterior_hyper %>%
+  rename(Season = distribution) %>%
+  mutate(Season = if_else(Season == "posterior",
+                          "Annual", "Prior") %>% fct()) %>%
+  select(-c(alpha_mu, alpha_theta, beta_mu, beta_nu)) %>%
+  bind_rows(grazing_prior_posterior_season %>%
+              filter(Season != "Prior")) 
+# Prior is identical for both but it's simulated in grazing_prior_posterior_hyper
+# and sampled in grazing_prior_posterior_season, so the former is smoother.
 
-# 2.8.4 Convert to percentage ####
+# 2.5.4 Predict across predictor range ####
+require(truncnorm) # R doesn't have a native truncated normal.
+grazing_prediction <- grazing_prior_posterior %>%
+  spread_continuous(data = grazing_cc, predictor_name = "Consumption",
+                    group_name = "Season") %>%
+  mutate(mu = alpha + beta * Consumption,
+         Defecation = rtruncnorm( n() , mean = mu , sd = sigma , a = 0 ))
+
+# 2.5.4 Summarise predictions ####
+grazing_prediction_summary <- grazing_prediction %>%
+  group_by(Season, Consumption) %>%
+  mean_qi(mu, Defecation, .width = c(.5, .8, .9))
+
+
+# 2.5.5 Convert beta to percent defecation/absorption ####
+
 C_prior_posterior %<>%
   mutate(mu = mu * 100,
          obs = obs * 100,
@@ -372,8 +357,64 @@ C_diff %<>%
            signif(digits = 2) %>% 
            str_c("%"))
 
+# 3. Consumption model ####
+# 4. Defecation model ####
+# 5. Absorption model ####
 
+# 6. Visualisation ####
+# Define custom theme
+mytheme <- theme(panel.background = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 axis.line = element_line(),
+                 axis.title = element_text(size = 12, hjust = 0),
+                 axis.text = element_text(size = 10, colour = "black"),
+                 axis.ticks.length = unit(.25, "cm"),
+                 axis.ticks = element_line(colour = "black", lineend = "square"),
+                 legend.key = element_blank(),
+                 legend.key.width = unit(.25, "cm"),
+                 legend.key.height = unit(.45, "cm"),
+                 legend.key.spacing.x = unit(.5, "cm"),
+                 legend.key.spacing.y = unit(.05, "cm"),
+                 legend.background = element_blank(),
+                 legend.position = "top",
+                 legend.justification = 0,
+                 legend.text = element_text(size = 12, hjust = 0),
+                 legend.title = element_blank(),
+                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
+                 strip.background = element_blank(),
+                 strip.text = element_text(size = 12, hjust = 0),
+                 panel.spacing = unit(0.6, "cm"),
+                 text = element_text(family = "Futura"))
 
-
-
+require(geomtextpath)
+Fig_1a_left <- ggplot() + # manually limit 1:1 line to 0-40 range
+    geom_textline(data = tibble(x = c(0, 5), y = c(0, 5)), aes(x, y),
+                  label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
+    geom_point(data = grazing_cc,
+               aes(Consumption, Defecation, shape = Season),
+               size = 2, alpha = 0.5, colour = "#c3b300") +
+    # geom_ribbon(data = grazing_prediction_summary %>%
+    #               filter(Season == "Prior" & .width == 0.9),
+    #             aes(Consumption, ymin = mu.lower, ymax = mu.upper), 
+    #             colour = "grey", fill = NA) +
+    geom_line(data = grazing_prediction_summary %>%
+                filter(!Season %in% c("Annual", "Prior")),
+              aes(Consumption, mu, colour = Season)) +
+    geom_ribbon(data = grazing_prediction_summary %>%
+                  filter(!Season %in% c("Annual", "Prior")),
+                aes(Consumption, ymin = mu.lower, ymax = mu.upper,
+                    fill = Season, alpha = factor(.width))) +
+    scale_fill_manual(values = c(rep("#c3b300", 3)), guide = "none") +
+    scale_colour_manual(values = c(rep("#c3b300", 3)), guide = "none") +
+    scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+    # scale_x_continuous(breaks = seq(0, 90, 30)) +
+    # labs(x = expression("P"["n"]*" (µmol CO"[2]*" g"^-1*" h"^-1*")"),
+    #      y = expression("G (µmol CaCO"[3]*" g"^-1*" h"^-1*")")) +
+    coord_cartesian(xlim = c(0, 25), ylim = c(0, 5),
+                    expand = FALSE, clip = "off") +
+    mytheme
+Fig_1a_left
 
