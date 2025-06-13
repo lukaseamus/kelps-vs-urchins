@@ -1,4 +1,7 @@
-prior_samples <- function(model, data, n_name = "n", chains = 8, samples = 1e4) {
+prior_samples <- function(model, data, n_name = "n", 
+                          chains = 8, samples = 1e4,
+                          adapt_delta = NULL,
+                          max_treedepth = NULL) {
   
   empty_data <- data %>%
     purrr::modify_if(.p = ~ typeof(.x) == "double", ~ double(0)) %>%
@@ -10,7 +13,9 @@ prior_samples <- function(model, data, n_name = "n", chains = 8, samples = 1e4) 
     chains = chains,
     parallel_chains = parallel::detectCores(),
     iter_warmup = samples,
-    iter_sampling = samples)
+    iter_sampling = samples,
+    adapt_delta = adapt_delta,
+    max_treedepth = max_treedepth)
   
   return(prior_samples)
 }
@@ -142,6 +147,12 @@ spread_continuous <- function(prior_posterior_draws_short, data, predictor_name,
                   summarise(min = min(!!predictor_name_parsed),
                             max = max(!!predictor_name_parsed)),
                 by = group_name) %>%
+      mutate(min = if_else(is.na(min), # account for groups not contained in data, e.g. prior
+                           data %$% min(!!predictor_name_parsed),
+                           min),
+             max = if_else(is.na(max),
+                           data %$% max(!!predictor_name_parsed),
+                           max)) %>%
       rowwise() %>%
       mutate(!!predictor_name := list( seq(min, max, length.out = length) )) %>%
       select(-c(min, max)) %>%
