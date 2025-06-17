@@ -136,25 +136,21 @@ grazing %<>%
 # 2. Grazing model ####
 # 2.1 Prior simulation ####
 # The relationship between consumption and defecation is the defecated proportion.
-# This is available in the literature from Sauchyn & Scheibling 2009, doi
-# 10.3354/meps08296, who report 64.8 ± 3% absorption for the S. droebachiensis.
-# So my prior for the slope beta is centred on 0.352. beta has to be between 0
-# and 1 because there cannot be a negative relationship between consumption and
-# defecation and defecation cannot exceed consumption. 
-
-# The y intercept can only be positive (defecation without new consumption) because 
-# negative (consumption without defecation) would imply digestive lag which is
-# hardly possible for S. droebachiensis which retains food for only about 2 days,
-# much shorter than the sampling experimental duration (3.8-12 days). While it's 
-# also possible to parameterise alpha as the defecation at mean consumption by
-# centring the predictor variable and this would be better for setting priors and
-# sampling, I think not centring affords more control over the prediction. 
-# Sauchyn & Scheibling 2009 report lab consumption and defecation rates for clean 
-# kelp as 14.87 and 2.34 mg g^-1 d^-1. I can thus assume that defecation without 
-# additional consumption (alpha) should be expected between 0 and 2.34 mg g^-1 d^-1,
-# so a gamma distribution centred on 1 mg g^-1 d^-1 would be good. 
-
-# I will use partial pooling across seasons for both parameters.
+# This is the complement to absorption and there are several reports of one or
+# the other in the literature on Strongylocentrotus droebachiensis fed kelp. 
+# Miller & Mann 1973 report average defecation of 34%, Vadas 1977 reports 35%, 
+# Larson et al. 1980 report 41%, and Sauchyn & Scheibling 2009 report 35%, but 
+# Mamelona & Pelletier 2005 report much higher values of around 74%. So my prior
+# for beta has to be between 0 and 1 because there cannot be a negative 
+# relationship between consumption and defecation and defecation cannot exceed 
+# consumption. In addition it should be centred on 44% (mean of above estimates),
+# i.e. 0.44, allowing plenty of variation and giving even values as high as 0.8
+# substantial probability. There is no intercept in this model since steady
+# state consumption and defecation are assumed because urchins were fed 
+# continuously and defecation showed no temporal trend. Faeces that are produced 
+# from food eaten prior to the experiment are balanced by faeces that are not 
+# yet produced from food eaten during the experiment. I will use partial pooling 
+# across seasons for beta.
 
 # Complete cases
 grazing_cc <- grazing %>% 
@@ -162,11 +158,8 @@ grazing_cc <- grazing %>%
   drop_na()
 
 tibble(n = 1:1e3, # simulate hierachical prior
-       alpha_mu = rgamma( 1e3 , 1^2 / 0.5^2 , 1 / 0.5^2 ),
-       alpha_theta = rexp( 1e3 , 5 ),
-       alpha = rgamma( 1e3 , alpha_mu / alpha_theta , 1 / alpha_theta ),
-       beta_mu = rbeta( 1e3 , 0.352 * 20 , (1 - 0.352) * 20 ),
-       beta_nu = rgamma( 1e3 , 15^2 / 10^2 , 15 / 10^2 ),
+       beta_mu = rbeta( 1e3 , 0.44 * 30 , (1 - 0.44) * 30 ),
+       beta_nu = rgamma( 1e3 , 30^2 / 20^2 , 30 / 20^2 ),
        beta = rbeta( 1e3 , beta_mu * beta_nu , (1 - beta_mu) * beta_nu )) %>% # %$% hist(beta)
   expand_grid(Consumption = grazing_cc %$% 
                 seq(min(Consumption), max(Consumption), length.out = 50)) %>%
