@@ -378,12 +378,12 @@ Fig_S5a_bottom <- speed_diff %>%
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura", 
                    size = 3.5, hjust = 0.7, vjust = 0,
-                   n = 2^10, bw = 0.1, text_only = TRUE) +
+                   n = 2^10, bw = 0.2, text_only = TRUE) +
   geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.3, vjust = 0,
-                   n = 2^10, bw = 0.1, text_only = TRUE) +
+                   n = 2^10, bw = 0.2, text_only = TRUE) +
   geom_vline(xintercept = 0) +
   # annotate("text", x = -16, y = 0, 
   #          label = "italic(tilde('y'))",
