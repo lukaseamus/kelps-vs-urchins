@@ -1593,52 +1593,66 @@ phenol_prior_posterior %>%
 # Season and individual add quite a bit of variability to the mean
 # of kelp.
 
-# 4.10.5 Calculate difference ####
+# 4.10.5 Calculate differences and proportions ####
 phenol_diff <- phenol_prior_posterior %>%
   filter(Treatment != "Prior") %>%
   droplevels() %>%
   select(-c(alpha_t, sigma_s, sigma_i, theta)) %>%
   pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
-  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
-         obs = obs_Kelp - obs_Faeces,
-         mu_new = mu_new_Kelp - mu_new_Faeces,
-         obs_new = obs_new_Kelp - obs_new_Faeces) %>%
-  select(.chain, .iteration, .draw, mu, obs, mu_new, obs_new) %>%
+  mutate(mu_diff = mu_Kelp - mu_Faeces, # Calculate absolute differences
+         obs_diff = obs_Kelp - obs_Faeces,
+         mu_new_diff = mu_new_Kelp - mu_new_Faeces,
+         obs_new_diff = obs_new_Kelp - obs_new_Faeces,
+         mu_reldiff = (mu_Kelp - mu_Faeces) / mu_Kelp, # Calculate relative differences
+         obs_reldiff = (obs_Kelp - obs_Faeces) / obs_Kelp,
+         mu_new_reldiff = (mu_new_Kelp - mu_new_Faeces) / mu_new_Kelp,
+         obs_new_reldiff = (obs_new_Kelp - obs_new_Faeces) / obs_new_Kelp,
+         mu_prop = mu_Faeces / mu_Kelp, # Calculate proportions
+         obs_prop = obs_Faeces / obs_Kelp,
+         mu_new_prop = mu_new_Faeces / mu_new_Kelp,
+         obs_new_prop = obs_new_Faeces / obs_new_Kelp) %>%
+  select(starts_with("."), ends_with("diff"), ends_with("reldiff"), ends_with("prop")) %>%
   pivot_longer(cols = -starts_with("."),
-               names_to = "Parameter",
-               values_to = "Difference")
-
-# 4.10.6 Plot difference ####
-phenol_diff %>%
-  ggplot(aes(Difference, Parameter)) +
-    geom_density_ridges(from = -1, to = 2) +
-    geom_vline(xintercept = 0) +
-    scale_x_continuous(limits = c(-1, 2), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# 4.10.7 Summarise difference ####
-phenol_diff_summary <- phenol_diff %>%
-  group_by(Parameter) %>%
-  summarise(mean = mean(Difference),
-            sd = sd(Difference),
-            P = mean(Difference > 0),
-            n = length(Difference)) %T>%
+               names_to = c("parameter", "difference"),
+               values_to = "value",
+               names_pattern = "^(.*)_(.*)$") %>%
+  pivot_wider(values_from = value, names_from = difference) %T>%
   print()
-# There is a 100% chance that new means and observations are different
-# between treatments.
 
-# 4.10.8 Add labels to phenol_diff ####
+# 4.10.6 Summarise difference ####
+phenol_diff_summary <- phenol_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(diff),
+            sd = sd(diff),
+            P = mean(diff > 0),
+            n = n()) %T>%
+  print()
+
+phenol_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(reldiff),
+            sd = sd(reldiff),
+            P = mean(reldiff > 0),
+            n = n())
+
+phenol_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(prop),
+            sd = sd(prop),
+            n = n())
+
+# 4.10.7 Add labels to phenol_diff ####
 phenol_diff %<>%
   left_join(phenol_diff_summary %>%
-              select(Parameter, P), 
-            by = "Parameter") %>%
+              select(parameter, P), 
+            by = "parameter") %>%
   mutate(label_Kelp = ( P * 100 ) %>% 
            signif(digits = 2) %>% 
            str_c("%"),
          label_Faeces = ( (1 - P) * 100 ) %>% 
            signif(digits = 2) %>% 
-           str_c("%"))
+           str_c("%")) %T>%
+  print()
 
 # 4.11 Visualisation ####
 # 4.11.1 Calculate densities ####
