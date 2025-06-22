@@ -2062,50 +2062,66 @@ chlvspheo_prior_posterior %<>%
          mu_new = mu_new * 100,
          obs_new = obs_new * 100)
 
-# 5.2.6.6 Calculate difference ####
+# 5.2.6.6 Calculate differences and proportions ####
 chlvspheo_diff <- chlvspheo_prior_posterior %>%
   filter(Treatment != "Prior") %>%
   droplevels() %>%
   select(-c(alpha_t, sigma_s, sigma_i, nu)) %>%
   pivot_wider(names_from = Treatment, values_from = c(mu, obs, mu_new, obs_new)) %>%
-  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
-         obs = obs_Kelp - obs_Faeces,
-         mu_new = mu_new_Kelp - mu_new_Faeces,
-         obs_new = obs_new_Kelp - obs_new_Faeces) %>%
-  select(.chain, .iteration, .draw, mu, obs, mu_new, obs_new) %>%
+  mutate(mu_diff = mu_Kelp - mu_Faeces, # Calculate absolute differences
+         obs_diff = obs_Kelp - obs_Faeces,
+         mu_new_diff = mu_new_Kelp - mu_new_Faeces,
+         obs_new_diff = obs_new_Kelp - obs_new_Faeces,
+         mu_reldiff = (mu_Kelp - mu_Faeces) / mu_Kelp, # Calculate relative differences
+         obs_reldiff = (obs_Kelp - obs_Faeces) / obs_Kelp,
+         mu_new_reldiff = (mu_new_Kelp - mu_new_Faeces) / mu_new_Kelp,
+         obs_new_reldiff = (obs_new_Kelp - obs_new_Faeces) / obs_new_Kelp,
+         mu_prop = mu_Faeces / mu_Kelp, # Calculate proportions
+         obs_prop = obs_Faeces / obs_Kelp,
+         mu_new_prop = mu_new_Faeces / mu_new_Kelp,
+         obs_new_prop = obs_new_Faeces / obs_new_Kelp) %>%
+  select(starts_with("."), ends_with("diff"), ends_with("reldiff"), ends_with("prop")) %>%
   pivot_longer(cols = -starts_with("."),
-               names_to = "Parameter",
-               values_to = "Difference")
-
-# 5.2.6.7 Plot difference ####
-chlvspheo_diff %>%
-  ggplot(aes(Difference, Parameter)) +
-    geom_density_ridges(from = -80, to = 80) +
-    geom_vline(xintercept = 0) +
-    scale_x_continuous(limits = c(-80, 80), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# 5.2.6.8 Summarise difference ####
-chlvspheo_diff_summary <- chlvspheo_diff %>%
-  group_by(Parameter) %>%
-  summarise(mean = mean(Difference),
-            sd = sd(Difference),
-            P = mean(Difference > 0),
-            n = length(Difference)) %T>%
+               names_to = c("parameter", "difference"),
+               values_to = "value",
+               names_pattern = "^(.*)_(.*)$") %>%
+  pivot_wider(values_from = value, names_from = difference) %T>%
   print()
 
-# 5.2.6.9 Add labels to phenol_diff ####
+# 5.2.6.7 Summarise difference ####
+chlvspheo_diff_summary <- chlvspheo_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(diff),
+            sd = sd(diff),
+            P = mean(diff > 0),
+            n = n()) %T>%
+  print()
+
+chlvspheo_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(reldiff),
+            sd = sd(reldiff),
+            P = mean(reldiff > 0),
+            n = n())
+
+chlvspheo_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(prop),
+            sd = sd(prop),
+            n = n())
+
+# 5.2.6.8 Add labels to phenol_diff ####
 chlvspheo_diff %<>%
   left_join(chlvspheo_diff_summary %>%
-              select(Parameter, P), 
-            by = "Parameter") %>%
+              select(parameter, P), 
+            by = "parameter") %>%
   mutate(label_Kelp = ( P * 100 ) %>% 
            signif(digits = 2) %>% 
            str_c("%"),
          label_Faeces = ( (1 - P) * 100 ) %>% 
            signif(digits = 2) %>% 
-           str_c("%"))
+           str_c("%")) %T>%
+  print()
 
 # 6. Visualisation ####
 # 6.1 Calculate densities ####

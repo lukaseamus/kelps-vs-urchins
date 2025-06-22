@@ -122,34 +122,53 @@ speed_prior_posterior %<>% # priors are identical for both treatments ->
   mutate(Tissue = if_else(distribution == "prior", # add Prior to Tissue
                           "Prior", Tissue) %>% fct()) %>%
   select(-distribution)
-  
-# Calculate difference
+
+# Calculate differences and proportions
 speed_diff <- speed_prior_posterior %>%
   filter(Tissue != "Prior") %>%
   droplevels() %>%
   select(-c(alpha, theta)) %>%
   pivot_wider(names_from = Tissue, values_from = c(mu, obs)) %>%
-  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
-         obs = obs_Kelp - obs_Faeces) %>%
-  select(.chain, .iteration, .draw, mu, obs) %>%
+  mutate(mu_diff = mu_Kelp - mu_Faeces, # Calculate absolute differences
+         obs_diff = obs_Kelp - obs_Faeces,
+         mu_reldiff = (mu_Kelp - mu_Faeces) / mu_Kelp, # Calculate relative differences
+         obs_reldiff = (obs_Kelp - obs_Faeces) / obs_Kelp,
+         mu_prop = mu_Faeces / mu_Kelp, # Calculate proportions
+         obs_prop = obs_Faeces / obs_Kelp) %>%
+  select(starts_with("."), ends_with("diff"), ends_with("reldiff"), ends_with("prop")) %>%
   pivot_longer(cols = -starts_with("."),
-               names_to = "Parameter",
-               values_to = "Difference")
+               names_to = c("parameter", "difference"),
+               values_to = "value",
+               names_sep = "_") %>%
+  pivot_wider(values_from = value, names_from = difference)
 
-# Summarise difference
+# Summarise differences
 speed_diff_summary <- speed_diff %>%
-  group_by(Parameter) %>%
-  summarise(mean = mean(Difference),
-            sd = sd(Difference),
-            P = mean(Difference > 0),
-            n = length(Difference)) %T>%
+  group_by(parameter) %>%
+  summarise(mean = mean(diff),
+            sd = sd(diff),
+            P = mean(diff > 0),
+            n = n()) %T>%
   print()
+
+speed_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(reldiff),
+            sd = sd(reldiff),
+            P = mean(reldiff > 0),
+            n = n())
+
+speed_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(prop),
+            sd = sd(prop),
+            n = n())
 
 # Add labels to speed_diff
 speed_diff %<>%
   left_join(speed_diff_summary %>%
-              select(Parameter, P), 
-            by = "Parameter") %>%
+              select(parameter, P), 
+            by = "parameter") %>%
   mutate(label_Kelp = ( P * 100 ) %>% 
            signif(digits = 2) %>% 
            str_c("%"),
@@ -265,39 +284,59 @@ distance_prior_posterior %<>% # priors are identical for both treatments ->
                           "Prior", Tissue) %>% fct()) %>%
   select(-distribution)
   
-# Calculate difference
+# Calculate differences and proportions
 distance_diff <- distance_prior_posterior %>%
   filter(Tissue != "Prior") %>%
   droplevels() %>%
   select(-c(alpha, theta)) %>%
   pivot_wider(names_from = Tissue, values_from = c(mu, obs)) %>%
-  mutate(mu = mu_Kelp - mu_Faeces, # calculate differences
-         obs = obs_Kelp - obs_Faeces) %>%
-  select(.chain, .iteration, .draw, mu, obs) %>%
+  mutate(mu_diff = mu_Kelp - mu_Faeces, # Calculate absolute differences
+         obs_diff = obs_Kelp - obs_Faeces,
+         mu_reldiff = (mu_Kelp - mu_Faeces) / mu_Kelp, # Calculate relative differences
+         obs_reldiff = (obs_Kelp - obs_Faeces) / obs_Kelp,
+         mu_prop = mu_Faeces / mu_Kelp, # Calculate proportions
+         obs_prop = obs_Faeces / obs_Kelp) %>%
+  select(starts_with("."), ends_with("diff"), ends_with("reldiff"), ends_with("prop")) %>%
   pivot_longer(cols = -starts_with("."),
-               names_to = "Parameter",
-               values_to = "Difference")
+               names_to = c("parameter", "difference"),
+               values_to = "value",
+               names_sep = "_") %>%
+  pivot_wider(values_from = value, names_from = difference)
 
 # Summarise difference
 distance_diff_summary <- distance_diff %>%
-  group_by(Parameter) %>%
-  summarise(mean = mean(Difference),
-            sd = sd(Difference),
-            P = mean(Difference > 0),
-            n = length(Difference)) %T>%
+  group_by(parameter) %>%
+  summarise(mean = mean(diff),
+            sd = sd(diff),
+            P = mean(diff > 0),
+            n = n()) %T>%
   print()
+
+distance_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(reldiff),
+            sd = sd(reldiff),
+            P = mean(reldiff > 0),
+            n = n())
+
+distance_diff %>%
+  group_by(parameter) %>%
+  summarise(mean = mean(prop),
+            sd = sd(prop),
+            n = n())
 
 # Add labels to speed_diff
 distance_diff %<>%
   left_join(distance_diff_summary %>%
-              select(Parameter, P), 
-            by = "Parameter") %>%
+              select(parameter, P), 
+            by = "parameter") %>%
   mutate(label_Kelp = ( P * 100 ) %>% 
            signif(digits = 2) %>% 
            str_c("%"),
          label_Faeces = ( (1 - P) * 100 ) %>% 
            signif(digits = 2) %>% 
-           str_c("%"))
+           str_c("%")) %T>%
+  print()
 
 
 

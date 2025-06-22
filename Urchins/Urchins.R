@@ -370,6 +370,13 @@ grazing_prior_posterior %<>%
   mutate(beta = beta * 100) %T>%
   print()
 
+# Summarise predictions
+grazing_prior_posterior %>%
+  group_by(Season) %>%
+  summarise(beta_mean = mean(beta),
+            beta_sd = sd(beta),
+            n = n())
+
 # 2.5.7 Calculate seasonal differences ####
 grazing_diff <- grazing_prior_posterior %>%
   filter(!Season %in% c("Prior", "Annual")) %>%
