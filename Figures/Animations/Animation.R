@@ -176,7 +176,7 @@ require(ggtext) # Needed to use Markdown syntax in gif
   theme(axis.title = element_markdown()) ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "speed.gif", path = here("Figures", "Animations"))
 
 # 1.9 Matching static plot of difference ####
@@ -337,7 +337,7 @@ distance_dens_ani <- bind_rows(
     mytheme ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "distance.gif", path = here("Figures", "Animations"))
 
 # 2.9 Matching static plot of difference ####
@@ -498,7 +498,7 @@ carbon_dens_ani <- bind_rows(
     mytheme ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "carbon.gif", path = here("Figures", "Animations"))
 
 # 3.9 Matching static plot of difference ####
@@ -663,7 +663,7 @@ phenol_dens_ani <- bind_rows(
     mytheme ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "phenol.gif", path = here("Figures", "Animations"))
 
 # 4.9 Matching static plot of difference ####
@@ -700,7 +700,7 @@ phenol_dens_ani <- bind_rows(
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
-# 5. Chlorophyll ####
+# 5. Chlorophyll a ####
 # 5.1 Load data ####
 chlorophyll <- 
   read_rds(here("Biochemistry", "Pigments", "RDS", "pigments.rds"))
@@ -726,8 +726,8 @@ chlorophyll %<>%
 # 5.3 Build density polygons ####
 chlorophyll_dens <- chlorophyll_prior_posterior %>%
   group_by(Treatment) %>%
-  reframe(x = c(0, density(obs_new, n = 2^10, from = 0, to = 100, bw = 100 * 0.025)$x, 100),
-          y = c(0, density(obs_new, n = 2^10, from = 0, to = 100, bw = 100 * 0.025)$y, 0)) %>%
+  reframe(x = c(0, density(obs_new, n = 2^10, from = 0, to = 100, bw = 100 * 0.02)$x, 100),
+          y = c(0, density(obs_new, n = 2^10, from = 0, to = 100, bw = 100 * 0.02)$y, 0)) %>%
   group_by(Treatment) %>%
   mutate(y = y * 66 / ( sum(y) * ( x[3] - x[2] ) )) %>%
   ungroup() %T>%
@@ -755,7 +755,7 @@ ggplot() +
   scale_fill_identity() +
   coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
                   expand = FALSE, clip = "off") +
-  xlab("Intact chlorophyll (%)") +
+  xlab(expression("Functional chlorophyll "*italic("a")*" (%)")) +
   mytheme
 # Looks fine.
 
@@ -820,12 +820,14 @@ chlorophyll_dens_ani <- bind_rows(
     scale_fill_manual(values = c("#b5b8ba", "#dabc23", "#7030a5")) +
     coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
                     expand = FALSE, clip = "off") +
-    xlab("Intact chlorophyll (%)") +
+    xlab("Functional chlorophyll <span style='font-style: italic; font-family: 
+         Futura-MediumItalic;'>a</span> (%)") + # *a* doesn't work for some reason
     transition_manual(.frame) +
-    mytheme ) %>%
+    mytheme +
+    theme(axis.title = element_markdown()) ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "chlorophyll.gif", path = here("Figures", "Animations"))
 
 # 5.9 Matching static plot of difference ####
@@ -854,9 +856,12 @@ chlorophyll_dens_ani <- bind_rows(
                        labels = scales::label_number(style_negative = "minus")) +
     scale_fill_manual(values = c("#7030a5", "#dabc23"),
                       guide = "none") +
-    xlab("Δ intact chlorophyll (%)") +
+    xlab("Δ functional chlorophyll <span style='font-style: italic; font-family: 
+         Futura-MediumItalic;'>a</span> (%)") + 
+    # Here *a* also works for an italic a but I chose to explicitly match the above
     coord_cartesian(expand = FALSE, clip = "off") +
-    mytheme ) %>%
+    mytheme +
+    theme(axis.title = element_markdown()) ) %>%
   ggsave(filename = "chlorophyll.png", path = here("Figures", "Animations"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
@@ -1189,7 +1194,7 @@ defecation_dens_ani <- bind_rows(
     theme(axis.title = element_markdown()) ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21 * 1/2, height = 10,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "grazing_left.gif", path = here("Figures", "Animations"))
 
 ( ggplot() +
@@ -1211,7 +1216,7 @@ defecation_dens_ani <- bind_rows(
           axis.line.y = element_blank()) ) %>%
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21 * 1/2, height = 10,
-          units = "cm", res = 500, renderer = gifski_renderer()) %>%
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
   anim_save(filename = "grazing_right.gif", path = here("Figures", "Animations"))
 
 # # Adjust theme for higher resolution plotting.

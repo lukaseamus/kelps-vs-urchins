@@ -58,8 +58,9 @@ rsconnect/
 *.rds
 RDS
 
-# GIFs
+# GIFs and videos
 *.gif
+*.mp4
 
 # Published files
 External
