@@ -62,5 +62,8 @@ RDS
 *.gif
 *.mp4
 
+# Presentation
+*.key
+
 # Published files
 External
