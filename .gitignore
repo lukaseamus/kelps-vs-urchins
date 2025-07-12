@@ -65,5 +65,7 @@ RDS
 # Presentation
 *.key
 
-# Published files
+# Published, archived and sequence files
 External
+Archive
+Sequences
