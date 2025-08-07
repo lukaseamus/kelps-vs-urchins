@@ -79,6 +79,8 @@ sequences %<>%
       list(
         Path %>%
           plotQualityProfile() +
+            # My guesses for quality drop are 290 for forward and
+            # 220 for reverse.
             geom_vline(xintercept = if (Direction == "Forward") 
                                     290 else 220) +
             ggtitle(glue("{Sample} ({Direction})")) 
@@ -91,7 +93,7 @@ sequences %<>%
 require(patchwork)
 sequences %$%
   wrap_plots(Quality_Plot) %>%
-  ggsave(filename = "Quality_Plot.pdf", device = cairo_pdf, 
+  ggsave(filename = "quality_plot.pdf", device = cairo_pdf, 
          path = here("Microbes", "DNA", "Plots"),
          height = 60, width = 60, units = "cm")
 # Trim positions 290 and 220 generally look good.
@@ -113,7 +115,7 @@ filter <- sequences %$%
     rev = Path_Reverse %>% setNames(Sample), filt.rev = Path_Reverse_Filtered %>% setNames(Sample), 
     truncLen = c(290, 220), # Trim forward to 290 bases and reverse to 220
     trimLeft = c(length(primer_341F), length(primer_806R)), # Remove primers
-    maxN = 0, maxEE = c(2, 2), truncQ = 2, 
+    maxN = 0, maxEE = c(1, 1), truncQ = 2, 
     rm.phix = TRUE, compress = TRUE, 
     matchIDs = TRUE, multithread = TRUE
   )
@@ -127,7 +129,7 @@ sequences %<>%
 rm(filter)
 
 sequences %$% mean(Prop_Filtered)
-# Around 81% of reads survived filtering.
+# Around 61% of reads survived filtering.
 
 sequences %>%
   ggplot(aes(Reads, Reads_Filtered)) +
@@ -158,7 +160,7 @@ sequences %<>%
 sequences %$%
   wrap_plots(c(Quality_Plot_Forward_Filtered, 
                Quality_Plot_Reverse_Filtered)) %>%
-  ggsave(filename = "Quality_Plot_Filtered.pdf", device = cairo_pdf, 
+  ggsave(filename = "quality_plot_filtered.pdf", device = cairo_pdf, 
          path = here("Microbes", "DNA", "Plots"),
          height = 60, width = 60, units = "cm")
 # Looks good.
