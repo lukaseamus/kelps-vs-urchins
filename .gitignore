@@ -58,6 +58,9 @@ rsconnect/
 *.rds
 RDS
 
+# Plots
+*.pdf
+
 # GIFs and videos
 *.gif
 *.mp4
