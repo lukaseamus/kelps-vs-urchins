@@ -24,23 +24,9 @@ model{
   vector[n] mu;
   for ( i in 1:n ) {
     mu[i] = F0[Group[i]] + Fmax[Group[i]] * 
-            tanh( beta[Group[i]] * Concentration[i] / Fmax[Group[i]] );
+            ( 1 - exp( -beta[Group[i]] * Concentration[i] / Fmax[Group[i]] ) );
   }
 
   // Truncated normal likelihood
   Fluorescence ~ normal( mu , sigma ) T[0,];
-}
-      
-generated quantities{
-  vector[n] mu;
-  for ( i in 1:n ) {
-    mu[i] = F0[Group[i]] + Fmax[Group[i]] *
-            tanh( beta[Group[i]] * Concentration[i] / Fmax[Group[i]] );
-  }
-
-  vector[n] log_lik;
-  for ( i in 1:n ) {
-    log_lik[i] = normal_lpdf( Fluorescence[i] | mu[i] , sigma ) -
-                 normal_lccdf( 0 | mu[i] , sigma );
-  }
 }

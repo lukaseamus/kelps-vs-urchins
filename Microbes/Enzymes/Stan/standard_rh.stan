@@ -2,27 +2,29 @@ data{
   int n;
   vector<lower=0>[n] Fluorescence;
   vector<lower=0>[n] Concentration;
+  array[n] int Group;
+  int n_Group;
 }
 
 parameters{
-  real<lower=0> F0;
-  real<lower=0> Fmax;
-  real<lower=0> beta;
+  vector<lower=0>[n_Group] F0;
+  vector<lower=0>[n_Group] Fmax;
+  vector<lower=0>[n_Group] beta;
   real<lower=0> sigma;
 }
 
 model{
   // Priors
   F0 ~ exponential( 0.01 );
-  Fmax ~ gamma( square(8e4) / square(4e4) , 8e4 / square(4e4) );
-  beta ~ gamma( square(600) / square(300) , 600 / square(300) );
-  sigma ~ exponential( 1e-3 );
+  Fmax ~ gamma( square(15e4) / square(8e4) , 15e4 / square(8e4) );
+  beta ~ gamma( square(1e3) / square(500) , 1e3 / square(500) );
+  sigma ~ exponential( 1e-4 );
 
   // Model
   vector[n] mu;
   for ( i in 1:n ) {
-    mu[i] = F0 + Fmax * beta * Concentration[i] / 
-            ( Fmax + beta * Concentration[i] );
+    mu[i] = F0[Group[i]] + Fmax[Group[i]] * beta[Group[i]] * Concentration[i] / 
+            ( Fmax[Group[i]] + beta[Group[i]] * Concentration[i] );
   }
 
   // Truncated normal likelihood
@@ -32,13 +34,13 @@ model{
 generated quantities{
   vector[n] mu;
   for ( i in 1:n ) {
-    mu[i] = F0 + Fmax * beta * Concentration[i] / 
-            ( Fmax + beta * Concentration[i] );
+    mu[i] = F0[Group[i]] + Fmax[Group[i]] * beta[Group[i]] * Concentration[i] /
+            ( Fmax[Group[i]] + beta[Group[i]] * Concentration[i] );
   }
-      
+
   vector[n] log_lik;
   for ( i in 1:n ) {
-    log_lik[i] = normal_lpdf( Fluorescence[i] | mu[i] , sigma ) - 
+    log_lik[i] = normal_lpdf( Fluorescence[i] | mu[i] , sigma ) -
                  normal_lccdf( 0 | mu[i] , sigma );
   }
 }
