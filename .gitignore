@@ -53,24 +53,3 @@ rsconnect/
 
 # RData
 .RDataTmp*
-
-# RDS files
-*.rds
-RDS
-
-# Plots
-*.pdf
-
-# GIFs and videos
-*.gif
-*.mp4
-
-# Presentation
-*.key
-
-# Published, archived and sequence files
-External
-Archive
-Sequences
-SILVA
-Metadata
