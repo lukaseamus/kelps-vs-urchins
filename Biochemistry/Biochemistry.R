@@ -626,3 +626,15 @@ Fig_2 <- ( ( Fig_2a_left_top | Fig_2a_middle_top | Fig_2a_right_top ) /
 Fig_2 %>%
   ggsave(filename = "Fig_2.pdf", device = cairo_pdf, path = "Figures", 
          height = 21, width = 21, units = "cm")
+
+
+rlnorm(
+  n = 1e6,
+  meanlog = log(100) - 0.5 * log( 1 + (5^2 / 100^2) ),
+  sdlog   = sqrt( log( 1 + (5^2 / 100^2) ) )               
+) %>% hist()
+
+
+
+
+
