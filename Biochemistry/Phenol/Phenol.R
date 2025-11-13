@@ -1009,7 +1009,7 @@ phenol$Standard_ht_Inverse_Prediction %>%
 phenol$Standard_Data[[2]] %>%
   print(n = 21)
 # Should still be fine to predict sample concentrations
-# because that 2.49 a.u. was clearly and outlier, so
+# because that 2.49 a.u. was clearly an outlier, so
 # there is no need to predict >= 2.46 a.u.
 
 # 3.9.3 Re-nest data ####
