@@ -268,7 +268,7 @@ enzymes %$%
 # A truncated normal likelihood ensures positive predictions but doesn't mess 
 # with the nonlinear model like a gamma likelihood would.
 
-require(truncnorm) # R doesn't have a built-in truncated normal distribution.
+require(extraDistr) # R doesn't have a built-in truncated normal distribution.
 tibble(n = 1:1e3,
        F0 = rexp( 1e3 , 0.01 ),
        Fmax = rgamma( 1e3 , 15e4^2 / 8e4^2 , 15e4 / 8e4^2 ),
@@ -279,10 +279,10 @@ tibble(n = 1:1e3,
          mu_es = F0 + Fmax * ( 1 - exp( -beta * c / Fmax ) ),
          mu_ht = F0 + Fmax * tanh( beta * c / Fmax ),
          mu_pl = if_else(c <= Fmax / beta, F0 + beta * c, F0 + Fmax),
-         F_rh = rtruncnorm( n = n() , mean = mu_rh , sd = sigma , a = 0 ),
-         F_es = rtruncnorm( n = n() , mean = mu_es , sd = sigma , a = 0 ),
-         F_ht = rtruncnorm( n = n() , mean = mu_ht , sd = sigma , a = 0 ),
-         F_pl = rtruncnorm( n = n() , mean = mu_pl , sd = sigma , a = 0 ),) %>%
+         F_rh = rtnorm( n = n() , mean = mu_rh , sd = sigma , a = 0 ),
+         F_es = rtnorm( n = n() , mean = mu_es , sd = sigma , a = 0 ),
+         F_ht = rtnorm( n = n() , mean = mu_ht , sd = sigma , a = 0 ),
+         F_pl = rtnorm( n = n() , mean = mu_pl , sd = sigma , a = 0 ),) %>%
   pivot_longer(cols = c(starts_with("mu"), starts_with("F_")),
                names_to = "par_mod",
                values_to = "value") %>%
@@ -913,7 +913,7 @@ enzymes %<>%
                             length = 50) %>%
           mutate(mu = F0 + Fmax * beta * Concentration / 
                       ( Fmax + beta * Concentration ),
-                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+                 obs = rtnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
           group_by(distribution, Concentration, Group) %>%
           mean_qi(mu, obs, .width = c(.5, .8, .9))
       ),
@@ -926,7 +926,7 @@ enzymes %<>%
                             group_name = "Group",
                             length = 50) %>%
           mutate(mu = F0 + Fmax * ( 1 - exp( -beta * Concentration / Fmax ) ),
-                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+                 obs = rtnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
           group_by(distribution, Concentration, Group) %>%
           mean_qi(mu, obs, .width = c(.5, .8, .9))
       ),
@@ -939,7 +939,7 @@ enzymes %<>%
                             group_name = "Group",
                             length = 50) %>%
           mutate(mu = F0 + Fmax * tanh( beta * Concentration / Fmax ),
-                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+                 obs = rtnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
           group_by(distribution, Concentration, Group) %>%
           mean_qi(mu, obs, .width = c(.5, .8, .9))
       ),
@@ -954,7 +954,7 @@ enzymes %<>%
           mutate(mu = if_else(Concentration <= Fmax / beta, 
                               F0 + beta * Concentration,
                               F0 + Fmax),
-                 obs = rtruncnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+                 obs = rtnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
           group_by(distribution, Concentration, Group) %>%
           mean_qi(mu, obs, .width = c(.5, .8, .9))
       )
@@ -1207,7 +1207,7 @@ standard_model <- here("Microbes", "Enzymes", "Stan", "standard.stan") %>%
   write_stan_file() %>%
   cmdstan_model()
 
-# Run model
+# Run model on full data
 enzymes %<>%
   mutate(
     Standard_Samples = Standard_Data %>%
@@ -1227,44 +1227,519 @@ enzymes %<>%
 
 enzymes$Standard_Samples[[1]]
 
-enzymes %>%
-  write_rds(here("Microbes", "Enzymes", "RDS", "enzymes.rds"))
-
 # 2.5 Model checks ####
 # 2.5.1 Rhat ####
-
+enzymes %<>%
+  mutate(
+    summary = Standard_Samples %>%
+      map(
+        ~ .x$summary() %>%
+          mutate(rhat_check = rhat > 1.001) %>%
+          summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
+                    rhat_mean = mean(rhat),
+                    rhat_sd = sd(rhat))
+      )
+  ) %>% 
+  unnest(cols = summary) %T>%
+  print(n = 33)
+# No rhat > 1.001, all mean rhats = 1.00
 
 # 2.5.2 Chains ####
+enzymes %<>%
+  rowwise() %>%
+  mutate(
+    Standard_Chains =
+      list(
+        Standard_Samples$draws(format = "df") %>%
+          mcmc_rank_overlay(pars = c("F0[1]", "F0[2]", 
+                                     "Fmax[1]", "Fmax[2]", 
+                                     "beta[1]", "beta[2]")) +
+          ggtitle(Name)
+      )
+    ) %>%
+  ungroup()
 
+enzymes %$% 
+  wrap_plots(Standard_Chains) %>%
+  ggsave(filename = "Standard_Chains.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 50)
+# Chains look good
 
 # 2.5.3 Pairs ####
+enzymes %<>%
+  mutate(
+    Standard_Pairs = Standard_Samples %>%
+      map(
+        ~ .x$draws(format = "df") %>%
+          mcmc_pairs(pars = c("F0[1]", "Fmax[1]", "beta[1]"))
+      )
+  )
 
+enzymes %$% 
+  wrap_plots(Standard_Pairs) %>%
+  ggsave(filename = "Standard_Pairs.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 50)
+# Some correlation between Fmax and beta but no concerning.
 
 # 2.6 Prior-posterior comparison ####
 # 2.6.1 Sample prior ####
-
+enzymes %<>%
+  mutate(
+    Standard_Prior = Standard_Data %>%
+      map(
+        ~ prior_samples(model = standard_model,
+                        data = .x %>%
+                          select(Concentration, Fluorescence, Group) %>%
+                          compose_data())
+      )
+  )
 
 # 2.6.2 Combine prior and posterior ####
-
+enzymes %<>%
+  mutate(
+    Standard_Prior_Posterior = pmap(
+      list(Standard_Prior, Standard_Samples, Standard_Data),
+      ~ prior_posterior_draws(prior_samples = ..1,
+                              posterior_samples = ..2,
+                              group = ..3 %>% select(Group),
+                              parameters = c("F0[Group]", "Fmax[Group]", 
+                                             "beta[Group]", "sigma"),
+                              format = "short")
+    )
+  )
 
 # 2.6.3 Plot comparison ####
+enzymes %<>%
+  rowwise() %>% 
+  # rowwise does the same as pmap albeit less efficiently 
+  # but makes adding plot elements such as titles easier
+  mutate(
+    Standard_Prior_Posterior_Plot =
+      list(
+        prior_posterior_draws(prior_samples = Standard_Prior,
+                              posterior_samples = Standard_Samples,
+                              group = Standard_Data %>% select(Group),
+                              parameters = c("F0[Group]", "Fmax[Group]", 
+                                             "beta[Group]", "sigma"),
+                              format = "long") %>%
+          prior_posterior_plot(group_name = "Group", ridges = FALSE) +
+          ggtitle(Name)
+      )
+  ) %>%
+  ungroup()
 
+enzymes %$% 
+  ( wrap_plots(Standard_Prior_Posterior_Plot) +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "bottom") ) %>%
+  ggsave(filename = "Standard_Prior_Posterior.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 100)
 
 # 2.7 Prediction ####
 # 2.7.1 Calculate prediction ####
-
+enzymes %<>%
+  mutate(
+    Standard_Prediction = Standard_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x,
+                            data = .y,
+                            predictor_name = "Concentration",
+                            group_name = "Group",
+                            length = 50) %>%
+          mutate(mu = F0 + Fmax * ( 1 - exp( -beta * Concentration / Fmax ) ),
+                 obs = rtnorm( n = n() , mean = mu , sd = sigma , a = 0 )) %>%
+          group_by(distribution, Concentration, Group) %>%
+          mean_qi(mu, obs, .width = c(.5, .8, .9))
+      )
+  )
 
 # 2.7.2 Recover group names ####
-
+enzymes %<>%
+  mutate(
+    Standard_Prior_Posterior = Standard_Prior_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ .x %>%
+          full_join(
+            .y %>% distinct(Treatment, Quenched, Group),
+            by = "Group"
+          )
+      ),
+    Standard_Prediction = Standard_Prediction %>%
+      map2(
+        Standard_Data,
+        ~ .x %>%
+          full_join(
+            .y %>% distinct(Treatment, Quenched, Group),
+            by = "Group"
+          )
+      )
+  )
 
 # 2.7.3 Plot prediction ####
+enzymes %<>%
+  rowwise() %>% 
+  mutate(
+    Standard_Prediction_Plot =
+      list(
+        Standard_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, 
+                       aes(Concentration, Fluorescence),
+                       shape = 16, alpha = 0.01) +
+            geom_line(data = . %>% filter(distribution == "posterior"),
+                      aes(Concentration, mu)) +
+            geom_ribbon(data = . %>% filter(distribution == "posterior"),
+                        aes(Concentration, ymin = obs.lower, ymax = obs.upper,
+                            alpha = factor(.width))) +
+            geom_ribbon(data = . %>% filter(distribution == "prior", .width == 0.9),
+                        aes(Concentration, ymin = obs.lower, ymax = obs.upper),
+                        colour = alpha("black", 0.3), fill = NA) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            facet_grid(~ Quenched + Treatment) +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  ) %>%
+  ungroup()
+
+enzymes %$% 
+  wrap_plots(Standard_Prediction_Plot) %>%
+  ggsave(filename = "Standard_Prediction.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 50)
+
+# Clean up
+enzymes %<>%
+  select(-c(contains("rhat"), contains("Plot"), Standard_Samples, 
+            Standard_Chains, Standard_Pairs, Standard_Prior)) %T>%
+  print()
+
+# Good time to save progress
+enzymes %>%
+  write_rds(here("Microbes", "Enzymes", "RDS", "enzymes.rds"))
+
+# Load progress
+enzymes <- here("Microbes", "Enzymes", "RDS", "enzymes.rds") %>%
+  read_rds() %T>%
+  print(n = 33)
+
+# 3. Sample data conversion ####
+# 3.1 Remove priors ####
+enzymes %<>%
+  mutate(
+    Standard_Posterior = Standard_Prior_Posterior %>%
+      map(~ .x %>% filter(distribution == "posterior"))
+  ) %>%
+  select(-Standard_Prior_Posterior) %T>%
+  print()
+
+# 3.2 Inverse prediction ####
+# 3.2.1 Rearrange parameters ####
+# The optimal standard curve model takes the form F = F0 + Fmax * 
+# ( 1 - exp( -beta * C / Fmax ) ), so it predicts fluorescence with
+# concentration. I want to do the inverse, that is predict concentration
+# with fluorescence. Solving for concentration, I get C = -Fmax / beta *
+# log( 1 - ( F - F0 ) / Fmax ).
+
+# 3.2.2 Calculate inverse prediction ####
+enzymes %<>%
+  mutate(
+    Standard_Inverse_Prediction = Standard_Posterior %>%
+      map2(
+        Standard_Data,
+        ~ spread_continuous(prior_posterior_draws_short = .x,
+                            data = .y,
+                            predictor_name = "Fluorescence",
+                            group_name = "Group",
+                            length = 50) %>%
+          # Note that obs cannot be predicted here because sigma maps 
+          # onto Fluorescence not Concentration.
+          mutate(mu = -Fmax / beta * log( 1 - ( Fluorescence - F0 ) / Fmax )) %>%
+          # The log expression is prone to undefined values so we need to remove
+          # them before summarising, otherwise the summary becomes NaN.
+          filter(is.finite(mu)) %>%
+          group_by(distribution, Fluorescence, Group) %>%
+          mean_qi(mu, .width = c(.5, .8, .9))
+      )
+  )
+
+# What about those NaNs?
+# In 9 plates mu is undefined for some combinations of parameter values
+# because the fluorescence I am trying to predict concentration with 
+# exceeds the asymptote in those cases. This is generally not a problem 
+# since it just restrains probability space for the predicted concentration.
+
+# 3.2.3 Recover group names ####
+enzymes %<>%
+  mutate(
+    Standard_Inverse_Prediction = Standard_Inverse_Prediction %>%
+      map2(
+        Standard_Data,
+        ~ .x %>%
+          full_join(
+            .y %>% distinct(Treatment, Quenched, Group),
+            by = "Group"
+          )
+      )
+  )
+
+# 3.2.4 Plot inverse prediction ####
+enzymes %<>%
+  rowwise() %>% 
+  mutate(
+    Standard_Inverse_Prediction_Plot =
+      list(
+        Standard_Inverse_Prediction %>%
+          ggplot() +
+            geom_point(data = Standard_Data, 
+                       aes(Fluorescence, Concentration),
+                       shape = 16, alpha = 0.01) +
+            geom_line(aes(Fluorescence, mu)) +
+            geom_ribbon(aes(Fluorescence, ymin = .lower, ymax = .upper,
+                            alpha = factor(.width))) +
+            scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+            facet_grid(~ Quenched + Treatment) +
+            ggtitle(Name) +
+            theme_minimal() +
+            theme(panel.grid = element_blank())
+      )
+  ) %>%
+  ungroup()
+
+enzymes %$% 
+  wrap_plots(Standard_Inverse_Prediction_Plot) %>%
+  ggsave(filename = "Standard_Inverse_Prediction.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 50)
+# Looks fine, except for panel 2 in plot 230921_4-MU_1 which cannot
+# predict above fluorescence of
+enzymes$Standard_Inverse_Prediction[[12]] %>%
+  filter(Quenched == TRUE) %$%
+  max(Fluorescence) # 11152.61
+# which is not high enough to capture all sample fluorescence (see below), 
+# effectively reducing the amount of data. This may be because the
+# fluorophore standard and released substrate fluorophore are somehow 
+# quenched differently. But its not a problem since we have a time series
+# for each well and can still estimate a linear rate from the data within
+# the standard curve range.
+
+# 3.3 Visualise sample data ####
+enzymes %<>%
+  rowwise() %>%
+  mutate(
+    Samples_Fluorescence_Plot = 
+      list(
+        Samples_Data %>%
+            ggplot(aes(Time, Fluorescence,
+                       colour = Concentration)) +
+              geom_point(shape = 16, size = 0.5, alpha = 0.5) +
+              facet_grid(~ Treatment + Quenched) +
+              ggtitle(Name) +
+              theme_minimal()
+        )
+    ) %>%
+  ungroup()
+
+enzymes %$% 
+  wrap_plots(Samples_Fluorescence_Plot) %>%
+  ggsave(filename = "Samples_Fluorescence.pdf",
+         path = here("Microbes", "Enzymes", "Plots"),
+         device = cairo_pdf, units = "cm",
+         width = 100, height = 50)
+# The inner filter effect can also clearly be seen for sample data
+# which plateau over time. There are two alternative ways to proceed:
+
+# 1. Assume linearity of fluorescence over time and estimate the rate
+# using a linear model. Then convert the distribution for the slope
+# (F t^-1) using the standard curve parameters to get C t^-1.
+
+# 2. Predict the distribution for C for each value of F, which should
+# linearise the time series. Then summarise C as mean and s.d. for each
+# timepoint and fit a linear model with a measurement error term to account 
+# for uncertainty in C. The slope is C t^-1.
+
+# Approach 1 may work for shorter time series for which linearity can 
+# be assumed, but this is clearly not the case here. Also it makes a
+# standard curve over the full spectrum of concentrations redundant
+# because the only fluorescence that needs to be converted is the slope
+# which can be chosen to be arbitrarily small by changing the unit of
+# time. Finally, the unit of time and hence magnitude of the linear rate
+# affects the result because quenching is nonlinear, so a quenched and
+# unquenched rate may not be different if the chosen unit is s^-1 but they
+# are certainly different if it is h^-1. Hence approach 2 is better here, 
+# albeit more computationally intensive.
+
+# 3.4 Re-nest data ####
+enzymes %<>%
+  select(Name, Date, Fluorophore, Plate, Samples_Data, Standard_Posterior) %>% 
+  mutate(
+    Samples_Data_Higher = Samples_Data %>%
+      map(~ .x %>% distinct(Content, Treatment, Quenched)),
+    Samples_Data_Lower = Samples_Data %>%
+      map(~ .x %>% select(-c(Content, Treatment, Quenched)))
+  ) %>%
+  select(-Samples_Data) %>%
+  unnest(cols = Samples_Data_Higher) %>%
+  rename(Samples_Data = Samples_Data_Lower) %T>%
+  print(n = 95)
+
+###########
+
+# 3.5 Filter relevant standard parameters ####
+enzymes %>%
+  mutate(
+    Standard_Posterior_Filtered =
+      pmap(
+        list(Standard_Posterior, Name, Quenched, Treatment),
+        ~ if(..2 == "230929_4-MU_1") {
+          ..1 %>% filter(Quenched == ..3 & Treatment == ..4)
+        } else {
+          ..1 %>% filter(Quenched == ..3)
+        }
+      )
+  ) %>%
+  print(n = 95)
+
+
+enzymes_unnested <- enzymes %>%
+  select(-c(Standard_Data, Standard_Prediction, Standard_Inverse_Prediction,
+            Standard_Inverse_Prediction_Plot, Samples_Fluorescence_Plot)) %>%
+  unnest(cols = Samples_Data) %T>%
+  print()
+# It worked, but patience is required.
+
+# 3.6 Calculate concentration ####
+# I need to calculate mean and standard deviation of concentration
+# given the standard parameters and their uncertainty. I would use 
+# left_join() typically but that would result in the number of rows
+# in enzymes_unnested multiplied by 8e4 posterior samples which is
+# more than is allowed by tibble. I need a rowwise oepration.
+
+enzymes_unnested %>%
+  slice(750000:750100) %>%
+  rowwise() %>%
+  mutate(
+    Concentration = list(
+      ( # 230929_4-MU_1 only has quenched standards for two kelps
+        if(Name != "230929_4-MU_1" & Quenched == TRUE) {
+          Standard_Posterior %>% filter(Quenched == TRUE)
+        } else if(Name != "230929_4-MU_1" & Quenched == FALSE) {
+          Standard_Posterior %>% filter(Quenched == FALSE)
+        } else if(Name == "230929_4-MU_1" & !is.na(Treatment) & 
+                  Treatment == "Alaria esculenta") {
+          Standard_Posterior %>% filter(Treatment == "Alaria esculenta")
+        } else if(Name == "230929_4-MU_1" & !is.na(Treatment) & 
+                  Treatment == "Laminaria digitata") {
+          Standard_Posterior %>% filter(Treatment == "Laminaria digitata")
+        }
+      ) %>% (
+        if(!is.null(.)) {
+          mutate(Concentration = -Fmax / beta * log( 1 - ( Fluorescence - F0 ) / Fmax )) %>%
+            filter(!is.nan(Concentration)) %>%
+            summarise(Fmax = mean(Fmax),
+                      beta = mean(beta),
+                      F0 = mean(F0),
+                      Concentration_mean = mean(Concentration), 
+                      Concentration_sd = sd(Concentration),
+                      Concentration_n = n())
+        } else {
+          tibble(Fmax = NA,
+                 beta = NA,
+                 F0 = NA,
+                 Concentration_mean = NA, 
+                 Concentration_sd = NA,
+                 Concentration_n = NA)
+        }
+      )
+    )
+  ) %>%
+  ungroup() %>% 
+  unnest(cols = Concentration) %>%
+  select(Name, Fluorescence, Fmax, beta, F0, starts_with("Concentration"))
 
 
 
 
+phenol %<>%
+  mutate(
+    Samples_Data = Technical_Prediction %>%
+      map2(
+        Standard_ht_Prior_Posterior,
+        ~ .x %>%
+          select(-c(mu, sigma)) %>%
+          full_join(
+            .y %>% 
+              filter(distribution == "posterior") %>%
+              select(-c(distribution, sigma)),
+            by = c(".chain", ".iteration", ".draw")
+            ) %>% 
+          mutate( # Here's where the magic happens!
+            Concentration = Amax / beta * atanh( ( Absorbance - A0 ) / Amax )
+            )
+      )
+  )
 
+phenol$Samples_Data %>% 
+  map(~ .x %>% filter(is.nan(Concentration)))
+# Very few NaNs produced (at mots a few per sample). That's good enough.
+# Still enough samples and it adds further regularisation.
 
+# Remove NaNs.
+phenol %<>%
+  mutate(
+    Samples_Data = Samples_Data %>%
+      map(
+        ~ .x %>% filter(!is.nan(Concentration))
+      )
+  )
 
+phenol$Samples_Data %>% 
+  map_lgl(~ .x %$% any(is.nan(Concentration))) %>%
+  any()
+# No more NaNs.
 
+# Multiply 50% diluted samples by 2.
+phenol %<>%
+  mutate(
+    Samples_Data = if_else(ID %>% str_detect("50%"),
+                           Samples_Data %>%
+                             map(
+                               ~ .x %>%
+                                 mutate(Concentration = Concentration * 2)
+                             ),
+                           Samples_Data),
+    ID = if_else(ID %>% str_detect("50%"),
+                 ID %>% str_remove("_50%"),
+                 ID) %>% fct()
+    )
+
+# Calculate summary.
+phenol %<>%
+  mutate(
+    Samples_Data_Summary = Samples_Data %>%
+      map(
+        ~ .x %>%
+          summarise(Concentration_mean = mean(Concentration),
+                    Concentration_sd = sd(Concentration))
+      )
+  )
+
+# 4. Enzyme activity rate models ####
+
+# 5. Experimental models ####
+# 5.1 Urchin grazing ####
+
+# 5.2 Enzyme kinetics ####
 
 
