@@ -29,7 +29,7 @@ phenol <-
   here("Biochemistry", "Phenol", "RDS", "phenol.rds") %>% 
   read_rds()
 phenol_ID_dens <- 
-  here("Biochemistry", "Phenol", "RDS", "phenol_ID_dens.rds") %>% 
+  here("Biochemistry", "Phenol", "RDS", "ID_dens.rds") %>% 
   read_rds()
 phenol_prior_posterior <- 
   here("Biochemistry", "Phenol", "RDS", "phenol_prior_posterior.rds") %>% 
@@ -117,7 +117,7 @@ mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
                  panel.grid.minor = element_blank(),
                  panel.border = element_blank(),
-                 plot.margin = margin(0, 0.5, 0, 0, unit = "cm"),
+                 plot.margin = margin(0, 1, 0, 0, unit = "cm"),
                  axis.line = element_line(),
                  axis.title = element_text(size = 12, hjust = 0),
                  axis.text = element_text(size = 10, colour = "black"),
@@ -145,6 +145,7 @@ mytheme <- theme(panel.background = element_blank(),
 
 # 2.2 Carbon ####
 # 2.2.1 Prediction ####
+require(ggridges)
 Fig_2a_left_top <- ggplot() +
   geom_jitter(data = C_N %>%
                 mutate(Season = Season %>% fct_relevel("Spring", "Summer")),
@@ -152,11 +153,12 @@ Fig_2a_left_top <- ggplot() +
                   colour = Treatment, shape = Season), 
               alpha = 0.4, size = 2.5, height = 0.36) +
   stat_density_ridges(data = C_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), fill = Treatment), 
                       colour = NA, n = 2^10,
                       from = 0, to = 60, rel_min_height = 0.001, 
-                      bandwidth = 0.6, scale = 1.2, alpha = 0.7) +
+                      bandwidth = 60*0.02, scale = 1.2, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 60), breaks = seq(0, 60, 20),
                      oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
@@ -167,51 +169,81 @@ Fig_2a_left_top <- ggplot() +
                      # override grey fill legend shapes because they can be confused with prior
                      guide = guide_legend(override.aes = list(shape = c(1, 2, 0)))) +
   xlab("Carbon content (%)") +
-  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
   mytheme
 
 # 2.2.2 Difference ####
 require(geomtextpath)
+# Fig_2a_left_bottom <- C_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter,
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 1,
+#                       from = -50, to = 50, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 17 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.8, vjust = 0,
+#                    n = 2^10, bw = 1, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 17 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.75, vjust = 0,
+#                    n = 2^10, bw = 1, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 17 + 1,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.35, vjust = 0,
+#                    n = 2^10, bw = 1, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 17 + 2,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.32, vjust = 0,
+#                    n = 2^10, bw = 1, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -50, y = c(1, 2), 
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-50, 50), oob = scales::oob_keep,
+#                      breaks = seq(-50, 50, 25),
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab("Δ carbon content (%)") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme
+
 Fig_2a_left_bottom <- C_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter,
+  stat_density_ridges(aes(x = diff, y = 0,
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 1,
+                      colour = NA, linewidth = 0, bandwidth = 100*0.02,
                       from = -50, to = 50, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 17 + 1,
+  geom_textdensity(aes(x = diff, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura", 
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 1, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 17 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.75, vjust = 0,
-                   n = 2^10, bw = 1, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 17 + 1,
+                   n = 2^10, bw = 100*0.02, text_only = T) +
+  geom_textdensity(aes(x = diff, y = after_stat(density),
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.35, vjust = 0,
-                   n = 2^10, bw = 1, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 17 + 2,
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.32, vjust = 0,
-                   n = 2^10, bw = 1, text_only = TRUE) +
+                   n = 2^10, bw = 100*0.02, text_only = T) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -50, y = c(1, 2), 
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-50, 50), oob = scales::oob_keep,
                      breaks = seq(-50, 50, 25),
                      labels = scales::label_number(style_negative = "minus")) +
@@ -230,11 +262,12 @@ Fig_2a_middle_top <- ggplot() +
                   colour = Treatment, shape = Season), 
               alpha = 0.4, size = 2.5, height = 0.36) +
   stat_density_ridges(data = N_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), fill = Treatment), 
                       colour = NA, n = 2^10,
                       from = 0, to = 3, rel_min_height = 0.001, 
-                      bandwidth = 0.03, scale = 1.2, alpha = 0.7) +
+                      bandwidth = 3*0.02, scale = 1.2, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                     guide = guide_legend(reverse = TRUE, order = 1)) +
@@ -243,50 +276,79 @@ Fig_2a_middle_top <- ggplot() +
   scale_shape_manual(values = c(16, 17, 15),
                      guide = guide_legend(override.aes = list(shape = c(1, 2, 0)))) +
   xlab("Nitrogen content (%)") +
-  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
   mytheme
 
 # 2.3.2 Difference ####
+# Fig_2a_middle_bottom <- N_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 0.04,
+#                       from = -2, to = 2, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.7, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.92 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.65, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.3, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.92 + 2,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.35, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -2, y = c(1, 2), 
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab("Δ nitrogen content (%)") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme
+
 Fig_2a_middle_bottom <- N_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(Parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter, 
+  stat_density_ridges(aes(x = Difference, y = 0, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.04,
+                      colour = NA, linewidth = 0, bandwidth = 4*0.02,
                       from = -2, to = 2, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+  geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura", 
                    size = 3.5, hjust = 0.7, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.92 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.65, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.92 + 1,
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.3, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.92 + 2,
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.35, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -2, y = c(1, 2), 
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
                      labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
@@ -304,12 +366,13 @@ Fig_2a_right_top <- ggplot() +
                   colour = Treatment, shape = Season), 
               alpha = 0.4, size = 2.5, height = 0.36) +
   stat_density_ridges(data = C_N_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), 
                           fill = Treatment), 
                       colour = NA, n = 2^10,
                       from = 0, to = 120, rel_min_height = 0.001, 
-                      bandwidth = 1.2, scale = 1.2, alpha = 0.7) +
+                      bandwidth = 120*0.02, scale = 1.2, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 120), oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                     guide = guide_legend(reverse = TRUE, order = 1)) +
@@ -318,50 +381,81 @@ Fig_2a_right_top <- ggplot() +
   scale_shape_manual(values = c(16, 17, 15),
                      guide = guide_legend(override.aes = list(shape = c(1, 2, 0)))) +
   xlab("Carbon-nitrogen ratio") +
-  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
-  mytheme
+  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
+  mytheme + # remove space for all right plots
+  theme(plot.margin = margin(0, 0, 0, 0, unit = "cm"))
 
 # 2.4.2 Difference ####
+# Fig_2a_right_bottom <- C_N_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 2.4,
+#                       from = -120, to = 120, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 50 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.8, vjust = 0,
+#                    n = 2^10, bw = 2.4, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 50 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.7, vjust = 0,
+#                    n = 2^10, bw = 2.4, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 50 + 1,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.41, vjust = 0,
+#                    n = 2^10, bw = 2.4, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 50 + 2,
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.43, vjust = 0,
+#                    n = 2^10, bw = 2.4, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -120, y = c(1, 2), 
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-120, 120), breaks = seq(-120, 120, 60),
+#                      oob = scales::oob_keep,
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab("Δ carbon-nitrogen ratio") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme
+
 Fig_2a_right_bottom <- C_N_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(Parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter, 
+  stat_density_ridges(aes(x = Difference, y = 0, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 2.4,
+                      colour = NA, linewidth = 0, bandwidth = 240*0.02,
                       from = -120, to = 120, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 50 + 1,
+  geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura", 
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 2.4, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 50 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.7, vjust = 0,
-                   n = 2^10, bw = 2.4, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 50 + 1,
+                   n = 2^10, bw = 240*0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.41, vjust = 0,
-                   n = 2^10, bw = 2.4, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 50 + 2,
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.43, vjust = 0,
-                   n = 2^10, bw = 2.4, text_only = TRUE) +
+                   n = 2^10, bw = 240*0.02, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -120, y = c(1, 2), 
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-120, 120), breaks = seq(-120, 120, 60),
                      oob = scales::oob_keep,
                      labels = scales::label_number(style_negative = "minus")) +
@@ -369,7 +463,8 @@ Fig_2a_right_bottom <- C_N_diff %>%
                     guide = "none") +
   xlab("Δ carbon-nitrogen ratio") +
   coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme
+  mytheme + # remove space for all right plots
+  theme(plot.margin = margin(0, 0, 0, 0, unit = "cm"))
 
 # 2.5 Phenol ####
 # 2.5.1 Prediction ####
@@ -382,61 +477,92 @@ Fig_2b_top <- ggplot() +
                    fill = Treatment), 
                alpha = 0.4) +
   stat_density_ridges(data = phenol_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), 
                           fill = Treatment), colour = NA, n = 2^10,
                       from = 0, to = 2, rel_min_height = 0.001, 
-                      bandwidth = 0.02, scale = 4, alpha = 0.7) +
+                      bandwidth = 2*0.02, scale = 2.6, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 2), breaks = seq(0, 2, 0.5),
                      labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1)),
                      oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                     guide = "none") +
   xlab("Phenolic content (%)") +
-  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
   mytheme
 
 # 2.5.2 Difference ####
+# Fig_2b_bottom <- phenol_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 0.04,
+#                       from = -2, to = 2, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.515 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.84, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.515 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.805, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.515 + 1, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.32, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 0.515 + 2, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.25, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -2, y = c(1, 2), 
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+#                      breaks = seq(-2, 2, 1),
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab("Δ phenolic content (%)") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme
+
 Fig_2b_bottom <- phenol_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter, 
+  stat_density_ridges(aes(x = diff, y = 0, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.04,
+                      colour = NA, linewidth = 0, bandwidth = 4*0.02,
                       from = -2, to = 2, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.515 + 1,
+  geom_textdensity(aes(x = diff, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura",
                    size = 3.5, hjust = 0.84, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.515 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura",
-                   size = 3.5, hjust = 0.805, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.515 + 1, 
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = diff, y = after_stat(density), 
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura",
-                   size = 3.5, hjust = 0.32, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 0.515 + 2, 
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura",
-                   size = 3.5, hjust = 0.25, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
+                   size = 3.5, hjust = 0.3, vjust = 0,
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -2, y = c(1, 2), 
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
                      breaks = seq(-2, 2, 1),
                      labels = scales::label_number(style_negative = "minus")) +
@@ -448,6 +574,7 @@ Fig_2b_bottom <- phenol_diff %>%
 
 # 2.6 Total pigment ####
 # 2.6.1 Prediction ####
+require(magrittr)
 Fig_2c_left_top <- ggplot() +
   geom_polygon(data = total_ID_dens %>% # Stratify by Treatment
                  mutate(y_area = y_area + if_else(Treatment == "Faeces", 0.5, 1.5)) %>%
@@ -457,11 +584,12 @@ Fig_2c_left_top <- ggplot() +
                    fill = Treatment), 
                alpha = 0.4) +
   stat_density_ridges(data = total_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), 
                           fill = Treatment), colour = NA, n = 2^10,
                       from = 0, to = 3, rel_min_height = 0.001, 
-                      bandwidth = 0.03, scale = 1.2, alpha = 0.7) +
+                      bandwidth = 3*0.02, scale = 1.2, alpha = 0.7) +
   geom_textpath(data = pigments %>%
                   select(ID, Treatment, Season, Samples_Data_Summary) %>%
                   unnest(cols = Samples_Data_Summary) %>%
@@ -477,51 +605,82 @@ Fig_2c_left_top <- ggplot() +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                     guide = "none") +
   xlab(expression("Total pigment (mg g"^-1*")")) +
-  coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
   mytheme + # Adjust the title margin to counteract the superscript.
   theme(axis.title.x = element_text(margin = margin(t = 0)))
 
 # 2.6.2 Difference ####
+# Fig_2c_left_bottom <- total_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 0.04,
+#                       from = -2, to = 2, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 1.07 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.71, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 1.07 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.68, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 1.07 + 1, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.35, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 1.07 + 2, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.38, vjust = 0,
+#                    n = 2^10, bw = 0.04, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -2, y = c(1, 2), 
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
+#                      breaks = seq(-2, 2, 1),
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab(expression("Δ total pigment (mg g"^-1*")")) +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme + # The previous plot also affected this one in the same way.
+#   theme(axis.title.x = element_text(margin = margin(t = 0)))
+
 Fig_2c_left_bottom <- total_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(Parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter, 
+  stat_density_ridges(aes(x = Difference, y = 0, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.04,
+                      colour = NA, linewidth = 0, bandwidth = 4*0.02,
                       from = -2, to = 2, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 1.07 + 1,
+  geom_textdensity(aes(x = Difference, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura",
                    size = 3.5, hjust = 0.71, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 1.07 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura",
-                   size = 3.5, hjust = 0.68, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 1.07 + 1, 
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = Difference, y = after_stat(density), 
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura",
                    size = 3.5, hjust = 0.35, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 1.07 + 2, 
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura",
-                   size = 3.5, hjust = 0.38, vjust = 0,
-                   n = 2^10, bw = 0.04, text_only = TRUE) +
+                   n = 2^10, bw = 4*0.02, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -2, y = c(1, 2), 
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-2, 2), oob = scales::oob_keep,
                      breaks = seq(-2, 2, 1),
                      labels = scales::label_number(style_negative = "minus")) +
@@ -543,79 +702,112 @@ Fig_2c_right_top <- ggplot() +
                    fill = Treatment), 
                alpha = 0.4) +
   stat_density_ridges(data = chlvspheo_prior_posterior %>%
+                        filter(Treatment != "Prior") %>% # comment out to show prior
                         mutate(Treatment = Treatment %>% fct_relevel("Faeces", "Kelp")),
                       aes(x = obs_new, y = Treatment %>% as.numeric(), 
                           fill = Treatment), colour = NA, n = 2^10,
                       from = 0, to = 100, rel_min_height = 0.001, 
-                      bandwidth = 1, scale = 1.2, alpha = 0.7) +
+                      bandwidth = 100*0.02, scale = 1.2, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 100), oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                     guide = "none") +
   xlab(expression("Intact chlorophyll (%)")) +
   coord_cartesian(ylim = c(0, 4), expand = FALSE, clip = "off") +
-  mytheme
+  mytheme + # remove space for all right plots
+  theme(plot.margin = margin(0, 0, 0, 0, unit = "cm"))
 
 # 2.7.2 Difference ####
+# Fig_2c_right_bottom <- chlvspheo_diff %>% 
+#   filter(Parameter %in% c("mu_new", "obs_new")) %>%
+#   mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = Difference, y = Parameter, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 1.6,
+#                       from = -80, to = 80, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 42.5 + 1,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.9, vjust = 0,
+#                    n = 2^10, bw = 1.6, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 42.5 + 2,
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura",
+#                    size = 3.5, hjust = 0.82, vjust = 0,
+#                    n = 2^10, bw = 1.6, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
+#                    aes(x = Difference, y = after_stat(density) * 42.5 + 1, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.37, vjust = 0,
+#                    n = 2^10, bw = 1.6, text_only = TRUE) +
+#   geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
+#                    aes(x = Difference, y = after_stat(density) * 42.5 + 2, 
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura",
+#                    size = 3.5, hjust = 0.36, vjust = 0,
+#                    n = 2^10, bw = 1.6, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -80, y = c(1, 2),
+#            label = c("italic(tilde('y'))", "italic('µ')"),
+#            hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-80, 80), oob = scales::oob_keep,
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
+#                     guide = "none") +
+#   xlab("Δ intact chlorophyll (%)") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme
+
 Fig_2c_right_bottom <- chlvspheo_diff %>% 
-  filter(Parameter %in% c("mu_new", "obs_new")) %>%
-  mutate(Parameter = Parameter %>% fct_relevel("obs_new")) %>%
+  filter(parameter == "obs_new") %>%
   ggplot() +
-  stat_density_ridges(aes(x = Difference, y = Parameter, 
+  stat_density_ridges(aes(x = diff, y = 0, 
                           fill = if_else(after_stat(x) < 0,
                                          "Faeces", "Kelp")), 
                       geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 1.6,
+                      colour = NA, linewidth = 0, bandwidth = 160*0.02,
                       from = -80, to = 80, rel_min_height = 0.001,
                       scale = 1) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 42.5 + 1,
+  geom_textdensity(aes(x = diff, y = after_stat(density),
                        label = label_Kelp),
                    colour = "#dabc23", family = "Futura",
                    size = 3.5, hjust = 0.9, vjust = 0,
-                   n = 2^10, bw = 1.6, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 42.5 + 2,
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura",
-                   size = 3.5, hjust = 0.82, vjust = 0,
-                   n = 2^10, bw = 1.6, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "obs_new"),
-                   aes(x = Difference, y = after_stat(density) * 42.5 + 1, 
+                   n = 2^10, bw = 160*0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = diff, y = after_stat(density), 
                        label = label_Faeces),
                    colour = "#7030a5", family = "Futura",
                    size = 3.5, hjust = 0.37, vjust = 0,
-                   n = 2^10, bw = 1.6, text_only = TRUE) +
-  geom_textdensity(data = . %>% filter(Parameter == "mu_new"),
-                   aes(x = Difference, y = after_stat(density) * 42.5 + 2, 
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura",
-                   size = 3.5, hjust = 0.36, vjust = 0,
-                   n = 2^10, bw = 1.6, text_only = TRUE) +
+                   n = 2^10, bw = 160*0.02, text_only = TRUE) +
   geom_vline(xintercept = 0) +
-  annotate("text", x = -80, y = c(1, 2),
-           label = c("italic(tilde('y'))", "italic('µ')"),
-           hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-           parse = TRUE) +
   scale_x_continuous(limits = c(-80, 80), oob = scales::oob_keep,
                      labels = scales::label_number(style_negative = "minus")) +
   scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
                     guide = "none") +
   xlab("Δ intact chlorophyll (%)") +
   coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme
+  mytheme + # remove space for all right plots
+  theme(plot.margin = margin(0, 0, 0, 0, unit = "cm"))
 
 # 2.8 Combine ####
+require(patchwork)
 Fig_2 <- ( ( Fig_2a_left_top | Fig_2a_middle_top | Fig_2a_right_top ) /
            ( ( Fig_2a_left_bottom | Fig_2a_middle_bottom | Fig_2a_right_bottom ) +
                 # margin allows finer adjustment than plot_spacer
-                theme(plot.margin = margin(0.2, 0.5, 0, 0, unit = "cm")) ) /
+                theme(plot.margin = margin(t = 0.3, unit = "cm")) ) /
            plot_spacer() / # create space between the two grouped rows
-           ( Fig_2b_top | Fig_2c_left_top | Fig_2c_right_top ) / 
+           ( Fig_2b_top | Fig_2c_left_top | Fig_2c_right_top ) /
            ( ( Fig_2b_bottom | Fig_2c_left_bottom | Fig_2c_right_bottom ) +
-                theme(plot.margin = margin(0.06, 0.5, 0, 0, unit = "cm")) ) ) +
+                theme(plot.margin = margin(t = 0.3, unit = "cm")) ) ) +
   plot_annotation(tag_levels = list(c("a", rep("", 5), "b", "c", rep("", 4))),
                   theme = theme(plot.margin = margin(0.75, 0.45, 0.5, 0.5, unit = "cm"))) +
-  plot_layout(heights = c(1, 0.5, 0.2, 1, 0.5), 
+  plot_layout(heights = c(1, 0.3, 0.2, 1, 0.3),
               guides = "collect") &
   theme(plot.tag = element_text(family = "Futura",
                                 size = 15, face = "bold"),
@@ -625,16 +817,4 @@ Fig_2 <- ( ( Fig_2a_left_top | Fig_2a_middle_top | Fig_2a_right_top ) /
 
 Fig_2 %>%
   ggsave(filename = "Fig_2.pdf", device = cairo_pdf, path = "Figures", 
-         height = 21, width = 21, units = "cm")
-
-
-rlnorm(
-  n = 1e6,
-  meanlog = log(100) - 0.5 * log( 1 + (5^2 / 100^2) ),
-  sdlog   = sqrt( log( 1 + (5^2 / 100^2) ) )               
-) %>% hist()
-
-
-
-
-
+         height = 16, width = 20, units = "cm")
