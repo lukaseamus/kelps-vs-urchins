@@ -225,19 +225,30 @@ meta_nc_samples <- meta_nc_model$sample(
         ) %T>%
   print()
 
+# Save draws
+meta_c_samples$draws() %>%
+  write_rds(here("Urchins", "RDS", "meta_c_samples.rds"))
+meta_c_samples$draws(format = "df") %>%
+  write_rds(here("Urchins", "RDS", "meta_c_samples_df.rds"))
+
+meta_nc_samples$draws() %>%
+  write_rds(here("Urchins", "RDS", "meta_nc_samples.rds"))
+meta_nc_samples$draws(format = "df") %>%
+  write_rds(here("Urchins", "RDS", "meta_nc_samples_df.rds"))
+
 # 2.3 Model diagnostics ####
 # 2.3.1 R-hat and ESS ####
 meta_c_samples$summary() %>%
   summarise(rhat_1.001 = mean( rhat > 1.001 ),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# 35% of rhat above 1.001. rhat = 1.00 ± 0.000610.
+# 49% of rhat above 1.001. rhat = 1.00 ± 0.00145.
 
 meta_nc_samples$summary() %>%
   summarise(rhat_1.001 = mean( rhat > 1.001 ),
             rhat_mean = mean(rhat),
             rhat_sd = sd(rhat))
-# 67% of rhat above 1.001. rhat = 1.00 ± 0.00256.
+# 0.8% of rhat above 1.001. rhat = 1.00 ± 0.000251.
 
 # 2.3.2 Chains ####
 
