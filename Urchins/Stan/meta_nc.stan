@@ -38,7 +38,7 @@ transformed parameters{
 
 model{
   // Priors
-  alpha ~ normal( logit(0.5) , 0.8 );
+  alpha ~ normal( logit(0.5) , 0.5 );
   sigma_f ~ normal( 0 , 0.5 )T[0,]; // half-normal priors
   sigma_g ~ normal( 0 , 0.5 )T[0,];
   sigma_s ~ normal( 0 , 0.5 )T[0,];
@@ -49,7 +49,7 @@ model{
   z_s ~ normal( 0 , 1 );
   z_r ~ normal( 0 , 1 );
   
-  nu ~ gamma( square(30) / square(20) , 30 / square(20) );
+  nu ~ gamma( square(20) / square(10) , 20 / square(10) );
   
   // Model with link function
   vector[n] mu = inv_logit(
