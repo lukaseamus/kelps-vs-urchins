@@ -53,3 +53,7 @@ rsconnect/
 
 # RData
 .RDataTmp*
+
+# Temporary Microsoft files
+~*.docx
+~*.xlsx
