@@ -1,6 +1,65 @@
 # 1. Prepare data ####
+# 1.1 Load data ####
 require(tidyverse)
+require(magrittr)
 require(here)
+
+meta <- here("Biochemistry", "Biochemistry.csv") %>%
+  read_csv() %>%
+  mutate(
+    Kelp = Plant %>% # Add kelp binary
+      str_detect("Alaria|Laminaria|Saccharina|Macrocystis|Nereocystis|Costaria|Agaru|Neoagarum|Ecklonia") &
+      !str_detect(coalesce(Notes, ""), "reconstituted"),
+    Genus = Urchin %>% str_extract("^\\S+"), # Extract urchin genus
+    Function = if_else(
+      Genus %>% # Distinguish kelp-feeders as functional group
+        str_detect("Strongylocentrotus|Mesocentrotus|Paracentrotus|Psammechinus|Parechinus"),
+      "Kelpivore", "Other"
+    )
+  ) %T>%
+  print(n = 105)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 3. Figure 2 ####
 # 1.1 Load carbon and nitrogen data ####
 C_N <- 
   here("Biochemistry", "C_N", "RDS", "C_N.rds") %>%
@@ -818,3 +877,7 @@ Fig_2 <- ( ( Fig_2a_left_top | Fig_2a_middle_top | Fig_2a_right_top ) /
 Fig_2 %>%
   ggsave(filename = "Fig_2.pdf", device = cairo_pdf, path = "Figures", 
          height = 16, width = 20, units = "cm")
+
+# 4. Figure 3 ####
+
+
