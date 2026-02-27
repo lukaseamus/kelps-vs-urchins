@@ -151,7 +151,7 @@ defecation %>%
 # Including food source in the model probably makes no sense, but I do want
 # to distinguish functional groups in the prediction. Urchins that don't feed
 # on kelp (mostly tropical species) can be summarised at their functional
-# group level which kelp-feeding urchins will be reported at the species level.
+# group level while kelp-feeding urchins will be reported at the species level.
 
 defecation %>%
   summarise(References = n_distinct(Reference),
