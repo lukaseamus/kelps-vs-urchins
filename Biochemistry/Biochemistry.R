@@ -342,7 +342,7 @@ require(bayesplot)
 # Non-centred chains are clearly better.
 
 # 2.3.3 Pairs ####
-biochem_c_samples_df %>%
+biochem_c_samples$draws(format = "df") %>%
   mcmc_pairs(
     pars = c("alpha", "c[1]", "c[4]", "f[1,2]", "f[4,1]", "g[1,1]", "g[4,5]", 
              "s[1,3]", "s[4,8]", "r[1,10]", "r[4,4]", "sigma_c", "sigma_f[1]", 
@@ -354,7 +354,7 @@ biochem_c_samples_df %>%
   ggsave(filename = "biochem_c_pairs.png", path = here("Biochemistry", "Plots"),
          width = 100, height = 100, units = "cm", bg = "white")
 
-biochem_nc_samples_df %>%
+biochem_nc_samples$draws(format = "df") %>%
   mcmc_pairs(
     pars = c("alpha", "c[1]", "c[4]", "f[1,2]", "f[4,1]", "g[1,1]", "g[4,5]", 
              "s[1,3]", "s[4,8]", "r[1,10]", "r[4,4]", "sigma_c", "sigma_f[1]", 
