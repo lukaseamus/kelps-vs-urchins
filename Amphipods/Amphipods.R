@@ -773,7 +773,6 @@ choice %>%
 tibble(n = 1:1e4,
        # Highly uncertain global intercept around 0.5 g
        alpha_mu = rnorm( 1e4 , log(0.5) , 2 ),
-       # More variation between foods is expected
        alpha_sigma_f = rtnorm( 1e4 , 0 , 1 , 0 ), # Food
        alpha_sigma_s = rtnorm( 1e4 , 0 , 1 , 0 ), # Season
        alpha_sigma_fs = rtnorm( 1e4 , 0 , 1 , 0 ), # Food × Season
@@ -1066,19 +1065,23 @@ nochoice_prior_posterior <- bind_rows(
     prior_posterior_draws(
       posterior_samples = nochoice_nc_samples,
       group = nochoice %>% select(Season),
-      parameters = c("alpha_s[Season]", "alpha_sigma_f", 
+      parameters = c("alpha_mu", "alpha_s[Season]", "alpha_sigma_f", 
                      "alpha_sigma_fs", "alpha_sigma_i",
                      "log_theta_mu", "log_theta_sigma"),
       format = "short"
     ) %>%
     mutate( 
-      # Calculate consumption of existing seasons 
-      # for new foods and sporophytes
+      # Calculate consumption for existing seasons 
+      # but new foods and sporophytes
       mu = exp(
-        rnorm( n() , alpha_s , alpha_sigma_f ) +
+        # Note alpha_mu is added because unlike for alpha_f it's
+        # not already incorporated into alpha_s
+        rnorm( n() , alpha_mu , alpha_sigma_f ) +
+          alpha_s +
           rnorm( n() , 0 , alpha_sigma_fs ) +
           rnorm( n() , 0 , alpha_sigma_i )
       ),
+      # theta must be calculated across foods
       theta = exp(
         rnorm( n() , log_theta_mu , log_theta_sigma )
       ),
@@ -1263,7 +1266,7 @@ nochoice_contrast_summary <- bind_rows(
   ) %>%
   mutate(
     across(
-      c(contains("mean"), contains("sd"), contains("median")),
+      c(contains("mean"), contains("sd"), contains("median"), P),
       ~signif(.x, 2)
     ),
     Diff = glue( "{Diff_mean} ± {Diff_sd} ({Diff_median})" ),
@@ -1274,10 +1277,900 @@ nochoice_contrast_summary <- bind_rows(
   select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
   print()
 
+# Clean up
+rm(
+  list = c(
+    ls(pattern = "nochoice_c_|nochoice_nc_"),
+    "nochoice_prior"
+  )
+)
+gc()
+
 # 3. Absolute choice model ####
+# 3.1 Prior simulation ####
+choice %>% print(n = 30)
+# Importantly, indivdiual here refers to both the kelp and
+# amphipod because each sporophyte was assigned exactly one
+# amphipod; compare amphipod mass and individual number:
+choice %>% distinct(Amphipod, Individual)
+
+# This being a choice design, consumption of one food is 
+# paired to that of the other and not independent as before.
+# Individual therefore must be included in the model. Before
+# I just did it for better inference across foods.
+
+# Gamma likelihood is again a sensible choice.
+tibble(n = 1:1e4,
+       # Same priors as before
+       alpha_mu = rnorm( 1e4 , log(0.5) , 2 ),
+       alpha_sigma_f = rtnorm( 1e4 , 0 , 1 , 0 ), # Food
+       alpha_sigma_s = rtnorm( 1e4 , 0 , 1 , 0 ), # Season
+       alpha_sigma_fs = rtnorm( 1e4 , 0 , 1 , 0 ), # Food × Season
+       alpha_sigma_i = rtnorm( 1e4 , 0 , 1 , 0 ), # Individual
+       log_theta_mu = rnorm( 1e4 , log(0.5) , 1 ),
+       log_theta_sigma = rtnorm( 1e4 , 0 , 1 , 0 )) %>%
+  mutate(
+    mu = exp(
+      rnorm( n() , alpha_mu , alpha_sigma_f ) +
+        rnorm( n() , 0 , alpha_sigma_s ) +
+        rnorm( n() , 0 , alpha_sigma_fs ) +
+        rnorm( n() , 0 , alpha_sigma_i )
+    ),
+    theta = exp( rnorm( n() , log_theta_mu , log_theta_sigma ) ),
+    Consumption = rgamma( n() , mu / theta , 1 / theta )
+  ) %>%
+  pivot_longer(cols = c(mu, Consumption), 
+               names_to = "parameter", values_to = "value") %>%
+  ggplot() +
+    geom_density(aes(value), fill = "black") +
+    geom_vline(xintercept = choice %$% range(Consumption),
+               colour ="white") +
+    scale_x_continuous(limits = c(0, 1.5), oob = scales::oob_keep) +
+    coord_cartesian(expand = F, clip = "off") +
+    facet_wrap(~parameter, scale = "free", nrow = 1) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Looks reasonable
+
+# 3.2 Stan model ####
+choice_abs_c_model <- here("Amphipods", "Stan", "choice_abs_c.stan") %>%
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+choice_abs_nc_model <- here("Amphipods", "Stan", "choice_abs_nc.stan") %>%
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+choice_abs_c_samples <- choice_abs_c_model$sample(
+          data = choice %>%
+            select(Food, Season, Individual, Consumption) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        ) %T>%
+  print()
+
+choice_abs_nc_samples <- choice_abs_nc_model$sample(
+          data = choice %>%
+            select(Food, Season, Individual, Consumption) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        ) %T>%
+  print()
+
+# Save draws
+choice_abs_c_samples$draws() %>%
+  write_rds(here("Amphipods", "RDS", "choice_abs_c_samples.rds"))
+choice_abs_c_samples$draws(format = "df") %>%
+  write_rds(here("Amphipods", "RDS", "choice_abs_c_samples_df.rds"))
+
+choice_abs_nc_samples$draws() %>%
+  write_rds(here("Amphipods", "RDS", "choice_abs_nc_samples.rds"))
+choice_abs_nc_samples$draws(format = "df") %>%
+  write_rds(here("Amphipods", "RDS", "choice_abs_nc_samples_df.rds"))
+
+# 3.3 Model diagnostics ####
+# 3.3.1 R-hat and ESS ####
+choice_abs_c_samples$summary() %>%
+  summarise(rhat_1.001 = mean( rhat > 1.001 ),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# 100% of rhat above 1.001. rhat = 1.02 ± 0.0193.
+
+choice_abs_nc_samples$summary() %>%
+  summarise(rhat_1.001 = mean( rhat > 1.001 ),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# No rhat above 1.001. rhat = 1.00 ± 0.000170.
+# Already the non-centred model is more promising.
+
+# 3.3.2 Chains ####
+choice_abs_c_chains <- choice_abs_c_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Centred model",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(0, 8e4), ylim = c(0, 1e3),
+                  expand = FALSE, clip = "off")
+
+choice_abs_nc_chains <- choice_abs_nc_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Non-centred model",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(0, 8e4), ylim = c(0, 1e3),
+                  expand = FALSE, clip = "off")
+
+( ( choice_abs_c_chains / choice_abs_nc_chains ) +
+  plot_layout(guides = "collect",
+              heights = c(6/8, 1)) &
+    theme(legend.position = "top",
+          legend.justification = 0) ) %>%
+  ggsave(filename = "choice_abs_chains.pdf", path = here("Amphipods", "Plots"),
+         device = cairo_pdf, width = 50, height = 50, units = "cm")
+# Non-centred chains are clearly better.
+
+# 3.3.3 Pairs ####
+choice_abs_c_samples$draws(format = "df") %>%
+  mcmc_pairs(
+    pars = c("alpha_mu", "alpha_f[1]", "alpha_f[2]", "alpha_s[1]", "alpha_s[2]", 
+             "alpha_fs[1,1]", "alpha_fs[1,2]", "alpha_fs[2,1]", "alpha_fs[2,2]",
+             "alpha_i[1]", "alpha_i[10]", "alpha_i[15]", "log_theta_mu", 
+             "log_theta[1]", "log_theta[2]"),
+    grid_args = list(top = "Centred model")
+  ) %>%
+  ggsave(filename = "choice_abs_c_pairs.png", path = here("Amphipods", "Plots"),
+         width = 75, height = 75, units = "cm", bg = "white")
+
+choice_abs_nc_samples$draws(format = "df") %>%
+  mcmc_pairs(
+    pars = c("alpha_mu", "alpha_f[1]", "alpha_f[2]", "alpha_s[1]", "alpha_s[2]", 
+             "alpha_fs[1,1]", "alpha_fs[1,2]", "alpha_fs[2,1]", "alpha_fs[2,2]",
+             "alpha_i[1]", "alpha_i[10]", "alpha_i[15]", "log_theta_mu", 
+             "log_theta[1]", "log_theta[2]"),
+    grid_args = list(top = "Non-centred model")
+  ) %>%
+  ggsave(filename = "choice_abs_nc_pairs.png", path = here("Amphipods", "Plots"),
+         width = 75, height = 75, units = "cm", bg = "white")
+# Some positive posterior correlation within predictors and
+# negative correlation between predictors. Nothing bad.
+# Non-centred posteriors are smoother.
+
+# 3.4 Prior-posterior comparison ####
+# 3.4.1 Sample prior ####
+# prior_samples only works properly with non-centred models, but
+# this is fine since priors are identical for both models
+choice_abs_prior <- prior_samples(
+  model = choice_abs_nc_model, 
+  data = choice %>%
+    select(Food, Season, Individual, Consumption) %>%
+    compose_data()
+)
+
+# 3.4.2 Centred model ####
+choice_abs_c_prior_posterior_global <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_c_samples,
+    parameters = c("alpha_mu", "alpha_sigma_f", "alpha_sigma_s", 
+                   "alpha_sigma_fs", "alpha_sigma_i", 
+                   "log_theta_mu", "log_theta_sigma"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot() +
+  labs(title = "Centred model")
+
+choice_abs_c_prior_posterior_fs <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_c_samples,
+    group = choice %>% select(Food, Season),
+    parameters = c("alpha_f[Food]", "alpha_s[Season]",
+                   "alpha_fs[Food, Season]"),
+    format = "long"
+  ) %>%
+  prior_posterior_plot(group_name = "Food",
+                       second_group_name = "Season")
+
+choice_abs_c_prior_posterior_i <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_c_samples,
+    group = choice %>% select(Individual),
+    parameters = c("alpha_i[Individual]"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot(group_name = "Individual", ridges = TRUE)
+
+# 3.4.3 Non-centred model ####
+choice_abs_nc_prior_posterior_global <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_nc_samples,
+    parameters = c("alpha_mu", "alpha_sigma_f", "alpha_sigma_s", 
+                   "alpha_sigma_fs", "alpha_sigma_i", 
+                   "log_theta_mu", "log_theta_sigma"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot() +
+  labs(title = "Non-centred model")
+
+choice_abs_nc_prior_posterior_fs <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_nc_samples,
+    group = choice %>% select(Food, Season),
+    parameters = c("alpha_f[Food]", "alpha_s[Season]",
+                   "alpha_fs[Food, Season]"),
+    format = "long"
+  ) %>%
+  prior_posterior_plot(group_name = "Food",
+                       second_group_name = "Season")
+
+choice_abs_nc_prior_posterior_i <- choice_abs_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_abs_nc_samples,
+    group = choice %>% select(Individual),
+    parameters = c("alpha_i[Individual]"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot(group_name = "Individual", ridges = TRUE)
+
+# 3.4.4 Combined ####
+choice_abs_prior_posterior <- 
+  ( ( choice_abs_c_prior_posterior_global /
+        choice_abs_c_prior_posterior_fs / 
+        choice_abs_c_prior_posterior_i ) +
+      plot_layout(heights = c(0.7, 1, 0.7)) |
+    ( choice_abs_nc_prior_posterior_global /
+        choice_abs_nc_prior_posterior_fs / 
+        choice_abs_nc_prior_posterior_i ) +
+      plot_layout(heights = c(0.7, 1, 0.7)) ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top", 
+        legend.justification = 0)
+
+choice_abs_prior_posterior %>%
+  ggsave(filename = "choice_abs_prior_posterior.pdf", 
+         path = here("Amphipods", "Plots"),
+         device = cairo_pdf, width = 40, height = 30, units = "cm")
+# Non-centred model posteriors are smoother.
+# Proceed with non-centred model.
+
+# 3.5 Prediction ####
+# 3.5.1 Parameter distributions ####
+choice_abs_prior_posterior <- bind_rows(
+  # Global
+  choice_abs_prior %>% 
+    prior_posterior_draws(
+      posterior_samples = choice_abs_nc_samples,
+      parameters = c("alpha_mu", "alpha_sigma_f", "alpha_sigma_s",
+                     "alpha_sigma_fs", "alpha_sigma_i", 
+                     "log_theta_mu", "log_theta_sigma"),
+      format = "short"
+    ) %>%
+    mutate( 
+      # Calculate consumption for new foods
+      mu = exp(
+        rnorm( n() , alpha_mu , alpha_sigma_f ) +
+          rnorm( n() , 0 , alpha_sigma_s ) +
+          rnorm( n() , 0 , alpha_sigma_fs ) +
+          rnorm( n() , 0 , alpha_sigma_i )
+      ),
+      theta = exp(
+        rnorm( n() , log_theta_mu , log_theta_sigma )
+      ),
+      Consumption = rgamma( n() , mu / theta , 1 / theta ),
+      Food = "New" %>% fct(),
+      Season = "Annual" %>% fct()
+    ),
+  # Food
+  choice_abs_prior %>% 
+    prior_posterior_draws(
+      posterior_samples = choice_abs_nc_samples,
+      group = choice %>% select(Food),
+      parameters = c("alpha_f[Food]", "alpha_sigma_s", 
+                     "alpha_sigma_fs", "alpha_sigma_i", 
+                     "log_theta[Food]"),
+      format = "short"
+    ) %>%
+    mutate( 
+      # Calculate consumption of existing foods 
+      # for new seasons and amphipods/sporophytes
+      mu = exp(
+        rnorm( n() , alpha_f , alpha_sigma_s ) +
+          rnorm( n() , 0 , alpha_sigma_fs ) +
+          rnorm( n() , 0 , alpha_sigma_i )
+      ),
+      theta = exp( log_theta ),
+      Consumption = rgamma( n() , mu / theta , 1 / theta ),
+      Season = "Annual" %>% fct()
+    ),
+  # Season
+  choice_abs_prior %>% 
+    prior_posterior_draws(
+      posterior_samples = choice_abs_nc_samples,
+      group = choice %>% select(Season),
+      parameters = c("alpha_mu", "alpha_s[Season]", "alpha_sigma_f", 
+                     "alpha_sigma_fs", "alpha_sigma_i",
+                     "log_theta_mu", "log_theta_sigma"),
+      format = "short"
+    ) %>%
+    mutate( 
+      # Calculate consumption for existing seasons 
+      # but new foods and amphipods/sporophytes
+      mu = exp( 
+        # Note alpha_mu is added because unlike for alpha_f it's
+        # not already incorporated into alpha_s
+         rnorm( n() , alpha_mu , alpha_sigma_f ) +
+          alpha_s +
+          rnorm( n() , 0 , alpha_sigma_fs ) +
+          rnorm( n() , 0 , alpha_sigma_i )
+      ),
+      # theta must be calculated across foods
+      theta = exp(
+        rnorm( n() , log_theta_mu , log_theta_sigma )
+      ),
+      Consumption = rgamma( n() , mu / theta , 1 / theta ),
+      Food = "New" %>% fct()
+    )
+) %>%
+  filter(Food == "Faeces" & Season == "Annual" & distribution == "prior" |
+           distribution == "posterior") %>%
+  mutate(
+    Food = if_else(
+      distribution == "prior", "Prior", Food
+    ) %>% fct(),
+    Season = if_else(
+      distribution == "prior", "Prior", Season
+    ) %>% fct()
+  ) %>%
+  select(starts_with("."), Food, Season, mu, Consumption) %T>%
+  print()
+
+choice_abs_prior_posterior %>% # Save
+  write_rds(here("Amphipods", "RDS", "choice_abs_prior_posterior.rds"))
+
+# Here there is no seasonal effect compared to the no-choice
+# experiment, likely because season here only represents when
+# the material going into the reconstituted food was collected,
+# not when the amphipods were collected. In the no-choice
+# experiment, season applies to food and amphipods. On the other
+# hand, individual is much more important here because it
+# applies to the amphipod individual, so indivdiual parameters
+# are worth extracting.
+choice_abs_prior_posterior_individual <- choice %>%
+  distinct(Food, Season, Amphipod, Individual) %>% # Get pairings from data
+  left_join(
+    choice_abs_prior %>% 
+      prior_posterior_draws(
+        posterior_samples = choice_abs_nc_samples,
+        group = choice %>% select(Food, Season),
+        parameters = c("alpha_f[Food]", "alpha_s[Season]",
+                       "alpha_fs[Food, Season]", "log_theta[Food]"),
+        format = "short"
+      ),
+    relationship = "many-to-many"
+  ) %>%
+  left_join(
+    choice_abs_prior %>% 
+      prior_posterior_draws(
+        posterior_samples = choice_abs_nc_samples,
+        group = choice %>% select(Individual),
+        parameters = c("alpha_i[Individual]"),
+        format = "short"
+      )
+  ) %>%
+  mutate( 
+    # Calculate consumption per food for each amphipod
+    mu = exp( alpha_f + alpha_s + alpha_fs + alpha_i ),
+    theta = exp( log_theta ),
+    Consumption = rgamma( n() , mu / theta , 1 / theta )
+  ) %>%
+  filter(Food == "Faeces" & Season == "Spring" & Individual == "1" & 
+           distribution == "prior" | distribution == "posterior") %>%
+  mutate(
+    Food = if_else(
+      distribution == "prior", "Prior", Food
+    ) %>% fct(),
+    Season = if_else(
+      distribution == "prior", "Prior", Season
+    ) %>% fct(),
+    Individual = if_else(
+      distribution == "prior", "Prior", Individual
+    ) %>% fct(),
+    Amphipod = if_else(
+      distribution == "prior", NA, Amphipod
+    )
+  ) %>%
+  select(starts_with("."), Food, Season, Individual, 
+         Amphipod, alpha_i, mu, Consumption) %T>%
+  print()
+
+choice_abs_prior_posterior_individual %>% # Save
+  write_rds(here("Amphipods", "RDS", "choice_abs_prior_posterior_individual.rds"))
+
+# 3.5.2 Contrast distributions ####
+# Food
+choice_abs_contrast_food <- choice_abs_prior_posterior %>%
+  filter(!Food %in% c("Prior", "New")) %>%
+  droplevels() %>%
+  pivot_wider(names_from = Food, values_from = c(mu, Consumption)) %>%
+  mutate(
+    `Faeces_Grazed kelp_Diff_mu` = mu_Faeces - `mu_Grazed kelp`,
+    `Faeces_Grazed kelp_Ratio_mu` = mu_Faeces / `mu_Grazed kelp`,
+    `Faeces_Grazed kelp_Diff_obs` = Consumption_Faeces - `Consumption_Grazed kelp`,
+    `Faeces_Grazed kelp_Ratio_obs` = Consumption_Faeces / `Consumption_Grazed kelp`
+  ) %>%
+  select(starts_with("."), ends_with("mu"), ends_with("obs")) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = c("a", "b", "type", "Parameter"),
+               values_to = "value",
+               names_pattern = "^(.*)_(.*)_(.*)_(.*)$") %>%
+  unite("Contrast", a, b, sep = " vs. ") %>%
+  pivot_wider(values_from = value, names_from = type) %T>%
+  print()
+
+# Season
+choice_abs_contrast_season <- choice_abs_prior_posterior %>%
+  filter(!Season %in% c("Prior", "Annual")) %>%
+  droplevels() %>%
+  pivot_wider(names_from = Season, values_from = c(mu, Consumption)) %>%
+  mutate(
+    Summer_Spring_Diff_mu = mu_Summer - mu_Spring,
+    Summer_Spring_Ratio_mu = mu_Summer / mu_Spring,
+    Summer_Spring_Diff_obs = Consumption_Summer - Consumption_Spring,
+    Summer_Spring_Ratio_obs = Consumption_Summer / Consumption_Spring
+  ) %>%
+  select(starts_with("."), ends_with("mu"), ends_with("obs")) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = c("a", "b", "type", "Parameter"),
+               values_to = "value",
+               names_pattern = "^(.*)_(.*)_(.*)_(.*)$") %>%
+  unite("Contrast", a, b, sep = " vs. ") %>%
+  pivot_wider(values_from = value, names_from = type) %T>%
+  print()
+
+# 3.5.3 Estimates ####
+# Something to be aware of: gamma introduced zeros
+choice_abs_prior_posterior %>%
+  count(Consumption == 0)
+choice_abs_prior_posterior_individual %>%
+  count(Consumption == 0)
+choice_abs_contrast_food %>%
+  count(Ratio == 0)
+choice_abs_contrast_season %>%
+  count(Ratio == 0)
+# A few Infs or NaNs were introduced because of this
+choice_abs_contrast_food %>%
+  count(!is.finite(Ratio))
+choice_abs_contrast_season %>%
+  count(!is.finite(Ratio))
+# This makes summarising logs a little tricky
+
+# Parameters
+choice_abs_summary <- choice_abs_prior_posterior %>%
+  mutate(
+    log_mu = log(mu), # Here I ensure there are no -Infs
+    log_Consumption = if_else(Consumption == 0, NA, log(Consumption))
+  ) %>%
+  summarise(
+    across(
+      where(is.numeric),
+      list(
+        mean = ~mean(.x, na.rm = T), # Ensure removal on NAs
+        sd = ~sd(.x, na.rm = T),
+        median = ~median(.x, na.rm = T)
+      )
+    ),
+    n = n(),
+    .by = c(Food, Season)
+  ) %>%
+  mutate(
+    across(
+      c(contains("mean"), contains("sd"), contains("median")),
+      ~signif(.x, 2)
+    ),
+    mu = glue( "{mu_median} ({log_mu_mean} ± {log_mu_sd})" ),
+    Consumption = glue( 
+      "{Consumption_median} ({log_Consumption_mean} ± {log_Consumption_sd})" 
+    )
+  ) %>%
+  select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
+  print()
+
+choice_abs_summary_individual <- choice_abs_prior_posterior_individual %>%
+  mutate(
+    log_mu = log(mu),
+    log_Consumption = if_else(Consumption == 0, NA, log(Consumption)),
+    exp_alpha_i = exp(alpha_i)
+    # alpha_i is the additive log effect of each individual, so exp(alpha_i)
+    # is the multiplicative effect or ratio to the grand mean
+  ) %>%
+  summarise(
+    across(
+      where(is.numeric),
+      list(
+        mean = ~mean(.x, na.rm = T),
+        sd = ~sd(.x, na.rm = T),
+        median = ~median(.x, na.rm = T)
+      )
+    ),
+    n = n(),
+    .by = c(Food, Season, Individual, Amphipod)
+  ) %>%
+  mutate(
+    across(
+      c(contains("mean"), contains("sd"), contains("median")),
+      ~signif(.x, 2)
+    ),
+    mu = glue( "{mu_median} ({log_mu_mean} ± {log_mu_sd})" ),
+    Consumption = glue( 
+      "{Consumption_median} ({log_Consumption_mean} ± {log_Consumption_sd})" 
+    ),
+    Effect = glue( "{exp_alpha_i_median} ({alpha_i_mean} ± {alpha_i_sd})" )
+  ) %>%
+  select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
+  print(n = 31)
+
+# Contrasts
+choice_abs_contrast_summary <- bind_rows(
+  Food = choice_abs_contrast_food,
+  Season = choice_abs_contrast_season,
+  .id = "Predictor"
+) %>%
+  mutate(
+    log_Ratio = if_else(
+      Ratio == 0 | !is.finite(Ratio), NA, log(Ratio)
+    )
+  ) %>%
+  summarise(
+    across(
+      where(is.numeric),
+      list(
+        mean = ~mean(.x, na.rm = T),
+        sd = ~sd(.x, na.rm = T),
+        median = ~median(.x, na.rm = T)
+      )
+    ),
+    n = n(),
+    P = mean( Diff > 0 ),
+    .by = c(Predictor, Contrast, Parameter)
+  ) %>%
+  mutate(
+    across(
+      c(contains("mean"), contains("sd"), contains("median"), P),
+      ~signif(.x, 2)
+    ),
+    Diff = glue( "{Diff_mean} ± {Diff_sd} ({Diff_median})" ),
+    Ratio = glue( 
+      "{Ratio_median} ({log_Ratio_mean} ± {log_Ratio_sd})" 
+    )
+  ) %>%
+  select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
+  print()
+
+# Clean up
+rm(
+  list = c(
+    ls(pattern = "choice_abs_c_|choice_abs_nc_"),
+    "choice_abs_prior"
+  )
+)
+gc()
 
 # 4. Relative choice model ####
+# 4.1 Prior simulation ####
+# I will re-analyse the choice data with a completely different model:
+# a model of consumption of one food relative to total consumption.
+# The response variable is a proportion so the likelihood is beta.
+# The data need to be reformatted accordingly:
+choice_rel <- choice %>%
+  pivot_wider(names_from = Food, values_from = Consumption) %>%
+  mutate(Proportion = Faeces / (Faeces + `Grazed kelp`)) %T>%
+  print()
+# The number of individuals is now identical to the number of
+# observations and food no longer features as a predictor, so
+# the model is dramatically simplified: all variation is seasonal.
+tibble(n = 1:1e4,
+       alpha_mu = rnorm( 1e4 , qlogis(0.5) , 1 ),
+       alpha_sigma = rtnorm( 1e4 , 0 , 1 , 0 ),
+       nu = rgamma( 1e4 , 20^2 / 10^2 , 20 / 10^2 )) %>%
+  mutate(
+    mu = plogis( rnorm( n() , alpha_mu , alpha_sigma ) ),
+    Proportion = rbeta( n() , mu * nu , (1 - mu) * nu )
+  ) %>%
+  pivot_longer(cols = c(mu, Proportion), 
+               names_to = "parameter", values_to = "value") %>%
+  ggplot() +
+    geom_density(aes(value), fill = "black") +
+    geom_vline(xintercept = choice_rel %$% range(Proportion),
+               colour ="white") +
+    coord_cartesian(expand = F, clip = "off") +
+    facet_wrap(~parameter, scale = "free", nrow = 1) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Practically uniform.
 
+# 4.2 Stan model ####
+choice_rel_c_model <- here("Amphipods", "Stan", "choice_rel_c.stan") %>%
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+choice_rel_nc_model <- here("Amphipods", "Stan", "choice_rel_nc.stan") %>%
+  read_file() %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+choice_rel_c_samples <- choice_rel_c_model$sample(
+          data = choice_rel %>%
+            select(Season, Proportion) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        ) %T>%
+  print()
+
+choice_rel_nc_samples <- choice_rel_nc_model$sample(
+          data = choice_rel %>%
+            select(Season, Proportion) %>%
+            compose_data(),
+          chains = 8,
+          parallel_chains = parallel::detectCores(),
+          iter_warmup = 1e4,
+          iter_sampling = 1e4
+        ) %T>%
+  print()
+
+# Save draws
+choice_rel_c_samples$draws() %>%
+  write_rds(here("Amphipods", "RDS", "choice_rel_c_samples.rds"))
+choice_rel_c_samples$draws(format = "df") %>%
+  write_rds(here("Amphipods", "RDS", "choice_rel_c_samples_df.rds"))
+
+choice_rel_nc_samples$draws() %>%
+  write_rds(here("Amphipods", "RDS", "choice_rel_nc_samples.rds"))
+choice_rel_nc_samples$draws(format = "df") %>%
+  write_rds(here("Amphipods", "RDS", "choice_rel_nc_samples_df.rds"))
+
+# 4.3 Model diagnostics ####
+# 4.3.1 R-hat and ESS ####
+choice_rel_c_samples$summary() %>%
+  summarise(rhat_1.001 = mean( rhat > 1.001 ),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# 100% of rhat above 1.001. rhat = 1.01 ± 0.00753.
+
+choice_rel_nc_samples$summary() %>%
+  summarise(rhat_1.001 = mean( rhat > 1.001 ),
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat))
+# No rhat above 1.001. rhat = 1.00 ± 0.000267.
+# Already the non-centred model is more promising.
+
+# 4.3.2 Chains ####
+choice_rel_c_chains <- choice_rel_c_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Centred model",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(0, 8e4), ylim = c(0, 1e3),
+                  expand = FALSE, clip = "off")
+
+choice_rel_nc_chains <- choice_rel_nc_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() +
+  guides(colour = guide_legend(nrow = 1)) +
+  labs(title = "Non-centred model",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(0, 8e4), ylim = c(0, 1e3),
+                  expand = FALSE, clip = "off")
+
+( ( choice_rel_c_chains / choice_rel_nc_chains ) +
+  plot_layout(guides = "collect",
+              heights = c(2/3, 1)) &
+    theme(legend.position = "top",
+          legend.justification = 0) ) %>%
+  ggsave(filename = "choice_rel_chains.pdf", path = here("Amphipods", "Plots"),
+         device = cairo_pdf, width = 20, height = 20, units = "cm")
+# Non-centred chains are clearly better.
+
+# 4.3.3 Pairs ####
+choice_rel_c_samples$draws(format = "df") %>%
+  mcmc_pairs(
+    pars = c("alpha_mu", "alpha_sigma", "alpha[1]", "alpha[2]", "nu"),
+    grid_args = list(top = "Centred model")
+  ) %>%
+  ggsave(filename = "choice_rel_c_pairs.png", path = here("Amphipods", "Plots"),
+         width = 25, height = 25, units = "cm", bg = "white")
+
+choice_rel_nc_samples$draws(format = "df") %>%
+  mcmc_pairs(
+    pars = c("alpha_mu", "alpha_sigma", "alpha[1]", "alpha[2]", "nu"),
+    grid_args = list(top = "Non-centred model")
+  ) %>%
+  ggsave(filename = "choice_rel_nc_pairs.png", path = here("Amphipods", "Plots"),
+         width = 25, height = 25, units = "cm", bg = "white")
+# No correlation. Non-centred posteriors are slightly smoother.
+
+# 4.4 Prior-posterior comparison ####
+# 4.4.1 Sample prior ####
+choice_rel_prior <- prior_samples(
+  model = choice_rel_nc_model, 
+  data = choice_rel %>%
+    select(Season, Proportion) %>%
+    compose_data()
+)
+
+# 4.4.2 Centred model ####
+choice_rel_c_prior_posterior <- choice_rel_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_rel_c_samples,
+    group = choice_rel %>% select(Season),
+    parameters = c("alpha_mu", "alpha_sigma", 
+                   "alpha[Season]", "nu"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot(group_name = "Season") +
+  labs(title = "Centred model")
+
+# 4.4.3 Non-centred model ####
+choice_rel_nc_prior_posterior_global <- choice_rel_prior %>% 
+  prior_posterior_draws(
+    posterior_samples = choice_rel_nc_samples,
+    group = choice_rel %>% select(Season),
+    parameters = c("alpha_mu", "alpha_sigma", 
+                   "alpha[Season]", "nu"),
+    format = "long"
+    ) %>%
+  prior_posterior_plot(group_name = "Season") +
+  labs(title = "Non-centred model")
+
+# 4.4.4 Combined ####
+( ( choice_rel_c_prior_posterior | 
+      choice_rel_nc_prior_posterior_global ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top", 
+        legend.justification = 0) ) %>%
+  ggsave(filename = "choice_rel_prior_posterior.pdf", 
+         path = here("Amphipods", "Plots"),
+         device = cairo_pdf, width = 25, height = 12, units = "cm")
+# Practically identical but non-centred model posteriors 
+# are slightly smoother. Proceed with non-centred model.
+
+# 4.5 Prediction ####
+# 4.5.1 Parameter distributions ####
+choice_rel_prior_posterior <- bind_rows(
+  # Global
+  choice_rel_prior %>% 
+    prior_posterior_draws(
+      posterior_samples = choice_rel_nc_samples,
+      parameters = c("alpha_mu", "alpha_sigma", "nu"),
+      format = "short"
+    ) %>%
+    mutate( 
+      # Calculate relative consumption for new seasons
+      mu = plogis( rnorm( n() , alpha_mu , alpha_sigma ) ),
+      Proportion = rbeta( n() , mu * nu , (1 - mu) * nu ),
+      Season = "Annual" %>% fct()
+    ),
+  # Season
+  choice_rel_prior %>% 
+    prior_posterior_draws(
+      posterior_samples = choice_rel_nc_samples,
+      group = choice_rel %>% select(Season),
+      parameters = c("alpha[Season]", "nu"),
+      format = "short"
+    ) %>%
+    mutate( 
+      # Calculate relative consumption for existing seasons
+      mu = plogis(alpha),
+      Proportion = rbeta( n() , mu * nu , (1 - mu) * nu )
+    )
+) %>%
+  filter(Season == "Spring" & distribution == "prior" |
+           distribution == "posterior") %>%
+  mutate(
+    Season = if_else(
+      distribution == "prior", "Prior", Season
+    ) %>% fct()
+  ) %>%
+  select(starts_with("."), Season, mu, Proportion) %T>%
+  print()
+
+choice_rel_prior_posterior %>% # Save
+  write_rds(here("Amphipods", "RDS", "choice_rel_prior_posterior.rds"))
+
+# 4.5.2 Contrast distributions ####
+choice_rel_contrast <- choice_rel_prior_posterior %>%
+  filter(!Season %in% c("Prior", "Annual")) %>%
+  droplevels() %>%
+  pivot_wider(names_from = Season, values_from = c(mu, Proportion)) %>%
+  mutate(
+    Summer_Spring_Diff_mu = mu_Summer - mu_Spring,
+    Summer_Spring_Ratio_mu = mu_Summer / mu_Spring,
+    Summer_Spring_Diff_obs = Proportion_Summer - Proportion_Spring,
+    Summer_Spring_Ratio_obs = Proportion_Summer / Proportion_Spring
+  ) %>%
+  select(starts_with("."), ends_with("mu"), ends_with("obs")) %>%
+  pivot_longer(cols = -starts_with("."),
+               names_to = c("a", "b", "type", "Parameter"),
+               values_to = "value",
+               names_pattern = "^(.*)_(.*)_(.*)_(.*)$") %>%
+  unite("Contrast", a, b, sep = " vs. ") %>%
+  pivot_wider(values_from = value, names_from = type) %T>%
+  print()
+
+# 4.5.3 Estimates ####
+# Parameters
+choice_rel_summary <- choice_rel_prior_posterior %>%
+  summarise(
+    across(
+      where(is.numeric),
+      list(
+        mean = mean,
+        sd = sd,
+        median = median
+      )
+    ),
+    n = n(),
+    P = mean( Proportion < 0.5 ),
+    .by = Season
+  ) %>%
+  mutate(
+    across(
+      c(contains("mean"), contains("sd"), contains("median"), P),
+      ~signif(.x, 2)
+    ),
+    mu = glue( "{mu_mean} ± {mu_sd} ({mu_median})" ),
+    Proportion = glue( 
+      "{Proportion_mean} ± {Proportion_sd} ({Proportion_median})" 
+    )
+  ) %>%
+  select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
+  print()
+
+# Contrasts
+choice_rel_contrast_summary <- choice_rel_contrast %>%
+  mutate(log_Ratio = log(Ratio)) %>%
+  summarise(
+    across(
+      where(is.numeric),
+      list(
+        mean = mean,
+        sd = sd,
+        median = median
+      )
+    ),
+    n = n(),
+    P = mean( Diff < 0 ),
+    .by = c(Contrast, Parameter)
+  ) %>%
+  mutate(
+    across(
+      c(contains("mean"), contains("sd"), contains("median"), P),
+      ~signif(.x, 2)
+    ),
+    Diff = glue( "{Diff_mean} ± {Diff_sd} ({Diff_median})" ),
+    Ratio = glue( 
+      "{Ratio_median} ({log_Ratio_mean} ± {log_Ratio_sd})" 
+    )
+  ) %>%
+  select(!(contains("mean") | contains("sd") | contains("median"))) %T>%
+  print()
+
+# Clean up
+rm(
+  list = c(
+    ls(pattern = "choice_rel_c_|choice_rel_nc_"),
+    "choice_rel_prior"
+  )
+)
+gc()
 
 # 5. Figure 4 ####
 mytheme <- theme(panel.background = element_blank(),
