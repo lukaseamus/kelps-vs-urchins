@@ -437,7 +437,7 @@ mytheme <- theme(panel.background = element_blank(),
                  legend.title = element_blank(),
                  legend.margin = margin(0, 0, 0, 0, unit = "cm"),
                  strip.background = element_blank(),
-                 strip.text = element_text(size = 12, hjust = 0),
+                 strip.text = element_text(size = 12, hjust = 0, face = "bold"),
                  panel.spacing = unit(1, "cm"),
                  text = element_text(family = "Futura"))
 
