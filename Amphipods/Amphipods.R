@@ -2173,116 +2173,233 @@ rm(
 gc()
 
 # 5. Figure 4 ####
-mytheme <- theme(panel.background = element_blank(),
-                 panel.grid.major = element_blank(),
-                 panel.grid.minor = element_blank(),
-                 panel.border = element_blank(),
-                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
-                 axis.line = element_line(),
-                 axis.title = element_text(size = 12, hjust = 0),
-                 axis.text = element_text(size = 10, colour = "black"),
-                 axis.ticks.length = unit(.25, "cm"),
-                 axis.ticks = element_line(colour = "black", lineend = "square"),
-                 axis.title.y = element_blank(),
-                 axis.text.y = element_blank(),
-                 axis.ticks.y = element_blank(),
-                 axis.line.y = element_blank(),
-                 legend.key = element_blank(),
-                 legend.key.width = unit(.25, "cm"),
-                 legend.key.height = unit(.45, "cm"),
-                 legend.key.spacing.x = unit(.5, "cm"),
-                 legend.key.spacing.y = unit(.05, "cm"),
-                 legend.background = element_blank(),
-                 legend.position = "top",
-                 legend.justification = 0,
-                 legend.text = element_text(size = 12, hjust = 0),
-                 legend.title = element_blank(),
-                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
-                 strip.background = element_blank(),
-                 strip.text = element_text(size = 12, hjust = 0),
-                 panel.spacing = unit(0.6, "cm"),
-                 text = element_text(family = "Futura"))
+# 5.1 Re-define theme ####
+mytheme <- mytheme +
+  theme(plot.title = element_text(size = 12, face = "bold"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank())
 
+# 5.2 No-choice ####
+# Build densities manually
+nochoice_dens <- bind_rows(
+  Global = nochoice_prior_posterior %>% 
+    filter(!Food %in% c("Prior", "New")) %>%
+    droplevels(),
+  Season = nochoice_prior_posterior_interaction %>% 
+    filter(Food != "Prior") %>%
+    droplevels(),
+  .id = "Level"
+) %>%
+  group_by(Level, Food, Season) %>%
+  reframe(
+    x = c(
+      0, 
+      density(
+        mu, n = 2^10, 
+        from = 0, to = 0.6, 
+        bw = 0.6 * 0.02
+      )$x,
+      0.6
+    ),
+    y = c(
+      0, 
+      density(
+        mu, n = 2^10, 
+        from = 0, to = 0.6, 
+        bw = 0.6 * 0.02
+      )$y, 
+      0
+    )
+  ) %>%
+  group_by(Level, Food, Season) %>% 
+  mutate(
+    # Standardise area with Riemann sum (avoid manually added x[1]).
+    y = y * 0.08 / ( sum(y) * ( x[3] - x[2] ) ),
+    # Arrange aesthetics for plot
+    y = case_when(
+      Food == "Faeces" ~ y + 1,
+      Food == "Grazed kelp" ~ y + 3,
+      Food == "Kelp" ~ y + 5
+    ),
+    Kelp = if_else(Food %>% str_detect("Kelp|kelp"), "Kelp", "Faeces"),
+    group = interaction(Food, Season, sep = "_")
+  ) %>%
+  ungroup() %T>%
+  print()
 
-# Prediction
-require(ggridges)
-Fig_4a_top <- nochoice %>%
-  mutate(Food = Food %>% fct_relevel("Faeces", "Grazed kelp"),
-         Kelp = Food %>% str_detect("Kelp|kelp")) %>%
+Fig_4_left <- nochoice %>%
+  mutate(
+    y = case_when(
+      Food == "Faeces" ~ 1,
+      Food == "Grazed kelp" ~ 3,
+      Food == "Kelp" ~ 5
+    ),
+    Kelp = if_else(Food %>% str_detect("Kelp|kelp"), "Kelp", "Faeces")) %>%
+  filter(Consumption < 1) %>% # remove single outlier of 2.3 g
   ggplot() +
-  geom_jitter(aes(x = Consumption, y = Food %>% as.numeric() - 0.5,
-                  colour = Kelp, shape = Season),
-              alpha = 0.4, size = 2.5, height = 0.36) +
-  stat_density_ridges(data = nochoice_prior_posterior_interaction %>%
-                        filter(Food != "Prior") %>%
-                        droplevels() %>%
-                        mutate(Food = Food %>% fct_relevel("Faeces", "Grazed kelp"),
-                               Kelp = Food %>% str_detect("Kelp|kelp")),
-                      aes(x = mu, y = Food %>% as.numeric(), 
-                          group = interaction(Food, Season), fill = Kelp),
-                      colour = NA, n = 2^10,
-                      from = 0, to = 0.6, rel_min_height = 0.001,
-                      bandwidth = 0.6*0.02, scale = 1.2, alpha = 0.7) +
-  stat_density_ridges(data = nochoice_prior_posterior %>%
-                        filter(!Food %in% c("Prior", "New")) %>%
-                        droplevels() %>%
-                        mutate(Food = Food %>% fct_relevel("Faeces", "Grazed kelp"),
-                               Kelp = Food %>% str_detect("Kelp|kelp")),
-                      aes(x = mu, y = Food %>% as.numeric(), group = Food), 
-                      fill = NA, n = 2^10, from = 0, to = 0.6, 
-                      rel_min_height = 0.001,
-                      bandwidth = 0.6*0.02, scale = 1.2) +
-  geom_text(aes(0.6, Food %>% as.numeric(), label = Food),
-            family = "Futura", size.unit = "pt", size = 12, 
-            hjust = 1, vjust = -0.5, check_overlap = TRUE) +
-  scale_x_continuous(limits = c(0, 0.6), #breaks = seq(0, 60, 20),
-                     oob = scales::oob_keep) +
-  scale_fill_manual(values = c("#7030a5", "#dabc23"),
-                    labels = c("TRUE" = "Kelp",
-                               "FALSE" = "Faeces"),
-                    guide = guide_legend(reverse = TRUE, order = 1)) +
-  scale_colour_manual(values = c("#7030a5", "#dabc23"),
-                      guide = "none") +
-  scale_shape_manual(values = c(16, 17), # circle, triangle
-                     # override grey fill legend shapes
-                     guide = guide_legend(override.aes = list(shape = c(1, 2)))) +
-  xlab("Consumption") +
-  coord_cartesian(ylim = c(0, 4.5), expand = FALSE, clip = "off") +
-  mytheme
+    geom_jitter(aes(x = Consumption, y = y - 0.5,
+                    colour = Kelp, shape = Season),
+                alpha = 0.4, size = 2.5, height = 0.36) +
+    geom_polygon(data = nochoice_dens %>% filter(Level == "Season"),
+                 aes(x, y, group = group, fill = Kelp), alpha = 0.7) +
+    geom_line(data = nochoice_dens %>% filter(Level == "Global"),
+              aes(x, y, group = group), colour = "#000000") +
+    geom_text(aes(0.6, y, label = Food),
+              family = "Futura", size.unit = "pt", size = 12, 
+              hjust = 1, vjust = -0.5, check_overlap = TRUE) +
+    scale_x_continuous(breaks = seq(0, 0.6, 0.2),
+                       labels = scales::label_number(accuracy = c(1, rep(0.1, 3)))) +
+    scale_fill_manual(values = c("#7030a5", "#dabc23"),
+                      guide = guide_legend(reverse = TRUE, order = 1)) +
+    scale_colour_manual(values = c("#7030a5", "#dabc23"),
+                        guide = "none") +
+    scale_shape_manual(values = c(16, 17), # circle, triangle
+                       # override grey fill legend shapes
+                       guide = guide_legend(override.aes = list(shape = c(1, 2)))) +
+    labs(x = expression("Consumption (g g"^-1*" d"^-1*")"),
+         title = "No-choice experiment") +
+    coord_cartesian(ylim = c(0, 6), expand = FALSE, clip = "off") +
+    mytheme +
+    theme(plot.margin = margin(0.2, 1, 0, 0.2, unit = "cm"),
+          axis.title.x = element_text(margin = margin(t = 0)))
 
-Fig_4a_top
+Fig_4_left
 
-# Difference
+# 5.3 Absolute choice ####
+# Build densities manually
+choice_abs_dens <- bind_rows(
+  Global = choice_abs_prior_posterior %>% 
+    filter(!Food %in% c("Prior", "New")) %>%
+    droplevels(),
+  Individual = choice_abs_prior_posterior_individual %>% 
+    filter(Food != "Prior") %>%
+    droplevels(),
+  .id = "Level"
+) %>%
+  mutate(
+    Individual = if_else(
+      is.na(Individual), "Global", Individual
+    ) %>% fct_relevel("Global", after = Inf),
+  ) %>%
+  group_by(Level, Food, Season, Individual) %>%
+  reframe(
+    x = c(
+      0, 
+      density(
+        mu, n = 2^10, 
+        from = 0, to = 1.5, 
+        bw = 1.5 * 0.02
+      )$x,
+      1.5
+    ),
+    y = c(
+      0, 
+      density(
+        mu, n = 2^10, 
+        from = 0, to = 1.5, 
+        bw = 1.5 * 0.02
+      )$y, 
+      0
+    )
+  ) %>%
+  group_by(Level, Food, Season, Individual) %>% 
+  mutate(
+    # Standardise area with Riemann sum (avoid manually added x[1]).
+    y = y * 0.063 / ( sum(y) * ( x[3] - x[2] ) ),
+    # Create aesthetics for plot
+    y = if_else( Food == "Faeces" , -y + 1 , y + 2 ),
+    group = interaction(Food, Individual, sep = "_"),
+    colour = case_when(
+      Level == "Global" ~ "#000000",
+      Food == "Faeces" ~ "#7030a5",
+      Food == "Grazed kelp" ~ "#dabc23"
+    ),
+    alpha = if_else(Level == "Global", 1, 0.4)
+  ) %>%
+  ungroup() %T>%
+  print()
+
+Fig_4_right_top <- choice %>%
+  mutate(
+    y = if_else( Food == "Faeces" , 1 + 0.25 , 2 - 0.25 ) + 
+      runif( n(), -0.16, 0.16 ), # Add jitter
+    colour_point = if_else( Food == "Faeces" , "#7030a5" , "#dabc23" ),
+    # geom_line colours by point of origin by default, so I'll reverse
+    colour_line = if_else( Food == "Faeces" , "#dabc23" , "#7030a5" )
+  ) %>%
+  ggplot() +
+    geom_point(aes(Consumption, y, colour = colour_point, shape = Season),
+               alpha = 0.4, size = 2.5) +
+    geom_line(aes(Consumption, y, colour = colour_line, group = Individual), 
+              alpha = 0.4, lineend = "round") +
+    geom_line(data = choice_abs_dens,
+              aes(x, y, group = group, colour = colour, alpha = alpha)) +
+    geom_text(aes(1.5, Food %>% as.numeric(), label = Food),
+              family = "Futura", size.unit = "pt", size = 12,
+              hjust = 1, vjust = -0.5, check_overlap = TRUE) +
+    scale_x_continuous(breaks = seq(0, 1.5, 0.5),
+                       labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1)),
+                       position = "top") +
+    scale_shape_manual(values = c(16, 17), guide = "none") +
+    scale_colour_identity() +
+    scale_alpha_identity() +
+    labs(x = expression("Consumption (g g"^-1*" d"^-1*")"),
+         title = "Choice experiment") +
+    coord_cartesian(xlim = c(0, 1.5), ylim = c(0.215, 3), 
+                    expand = FALSE, clip = "off") +
+    mytheme +
+    theme(axis.title.x.top = element_text(margin = margin(t = -4.7)),
+          plot.margin = margin(0.2, 0.5, 0, 0, unit = "cm"))
+
+Fig_4_right_top
+
+# 5.4 Relative choice ####
 require(geomtextpath)
-Fig_2a_left_bottom <- C_diff %>% 
-  filter(parameter == "obs_new") %>%
+Fig_4_right_bottom <- choice_rel_prior_posterior %>%
+  filter(Season == "Annual") %>%
+  left_join(choice_rel_summary %>% select(Season, P)) %>%
+  mutate(label_Kelp = ( P * 100 ) %>% signif(2) %>% str_c("%"),
+         label_Faeces = ( (1 - P) * 100 ) %>% signif(2) %>% str_c("%")) %>%
   ggplot() +
-  stat_density_ridges(aes(x = diff, y = 0,
-                          fill = if_else(after_stat(x) < 0,
-                                         "Faeces", "Kelp")), 
-                      geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 100*0.02,
-                      from = -50, to = 50, rel_min_height = 0.001,
-                      scale = 1) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 100*0.02, text_only = T) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.35, vjust = 0,
-                   n = 2^10, bw = 100*0.02, text_only = T) +
-  geom_vline(xintercept = 0) +
-  scale_x_continuous(limits = c(-50, 50), oob = scales::oob_keep,
-                     breaks = seq(-50, 50, 25),
-                     labels = scales::label_number(style_negative = "minus")) +
-  scale_fill_manual(values = c(alpha("#7030a5", 0.7), alpha("#dabc23", 0.7)),
-                    guide = "none") +
-  xlab("Δ carbon content (%)") +
-  coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme
+    geom_jitter(data = choice_rel,
+                aes(Proportion * 100, -0.5, colour = Proportion > 0.5, 
+                    shape = Season),
+                alpha = 0.4, size = 2.5, height = 0.36) +
+    geom_density(aes(Proportion * 100, y = after_stat(density) * 55, 
+                     fill = after_stat(x) > 50),
+                 colour = NA, alpha = 0.7,
+                 n = 2^10, bw = 100 * 0.03) +
+    geom_textdensity(aes(Proportion * 100, y = after_stat(density) * 55,
+                         label = label_Kelp),
+                     colour = "#dabc23", family = "Futura", 
+                     size = 3.5, hjust = 0.25, vjust = 0,
+                     n = 2^10, bw = 100 * 0.03, text_only = T) +
+    geom_textdensity(aes(Proportion * 100, y = after_stat(density) * 55,
+                         label = label_Faeces),
+                     colour = "#7030a5", family = "Futura", 
+                     size = 3.5, hjust = 0.75, vjust = 0,
+                     n = 2^10, bw = 100 * 0.03, text_only = T) +
+    geom_vline(xintercept = 50) +
+    scale_x_continuous(limits = c(0, 100),
+                       oob = scales::oob_keep) +
+    scale_shape_manual(values = c(16, 17), guide = "none") +
+    scale_colour_manual(values = c("#dabc23", "#7030a5"), guide = "none") +
+    scale_fill_manual(values = c("#dabc23", "#7030a5"), guide = "none") +
+    labs(x = "Relative consumption of faeces (%)") +
+    coord_cartesian(ylim = c(-1, 1), expand = FALSE, clip = "off") +
+    mytheme +
+    theme(plot.margin = margin(0, 0.5, 0, 0, unit = "cm"))
 
+Fig_4_right_bottom
 
+# 5.5 Combined ####
+Fig_4 <- ( Fig_4_left | 
+             free(Fig_4_right_top, side = "t") / Fig_4_right_bottom + 
+             plot_layout(heights = c(1, 0.5)) )
+Fig_4
 
+Fig_4 %>%
+  ggsave(filename = "Fig_4.pdf", path = "Figures",
+         device = cairo_pdf, width = 20, height = 10, units = "cm")
