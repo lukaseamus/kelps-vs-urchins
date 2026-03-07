@@ -25,7 +25,7 @@ speed %>%
 
 # Add meta-analysis data
 set.seed(100) # Set seed for simulation of observations from mean ± s.e.m.
-meta_speed <- here("Sinking", "Meta_speed.csv") %>% read_csv() %>%
+meta_speed <- here("Sinking", "Meta.csv") %>% read_csv() %>%
   rowwise() %>% # Simulate from a gamma distribution to avoid negative values
   mutate(Speed = list( rgamma( N , 
                                Mean^2 / ( SEM * sqrt(N) )^2 , 
@@ -456,7 +456,7 @@ speed2depth_prediction <- speed2depth_posterior %>%
 
 speed2depth_prediction_summary <- speed2depth_prediction %>%
   group_by(Speed) %>%
-  mean_qi(mu, Depth, .width = c(.5, .8, .9)) %T>%
+  median_qi(mu, Depth, .width = c(.5, .8, .9)) %T>%
   print()
 
 # 3.5.1 Predict depth from speed ####
@@ -535,7 +535,7 @@ mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
                  panel.grid.minor = element_blank(),
                  panel.border = element_blank(),
-                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 plot.margin = margin(0.2, 1, 0.2, 0.5, unit = "cm"),
                  axis.line = element_line(),
                  axis.title = element_text(size = 12, hjust = 0),
                  axis.text = element_text(size = 10, colour = "black"),
@@ -567,13 +567,15 @@ Fig_S5a_top <- ggplot() +
                 mutate(Tissue = Tissue %>% fct_relevel("Faeces", "Kelp")),
               aes(x = Speed, y = Tissue %>% as.numeric() - 0.5, 
                   colour = Tissue), 
-              alpha = 0.3, size = 1, height = 0.4, shape = 16) +
+              alpha = 0.4, size = 2.5, height = 0.36, shape = 16) +
   stat_density_ridges(data = speed_prior_posterior %>%
-                        mutate(Tissue = Tissue %>% fct_relevel("Faeces", "Kelp")),
+                        filter(Tissue != "Prior") %>%
+                        mutate(Tissue = Tissue %>% fct_drop() %>% 
+                                 fct_relevel("Faeces", "Kelp")),
                       aes(x = obs, y = Tissue %>% as.numeric(), fill = Tissue), 
                       colour = NA, n = 2^10,
                       from = 0, to = 25, rel_min_height = 0.001, 
-                      bandwidth = 0.25, scale = 2, alpha = 0.8) +
+                      bandwidth = 25 * 0.02, scale = 1.2, alpha = 0.7) +
   scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, by = 6),
                      oob = scales::oob_keep) +
   scale_fill_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
@@ -581,82 +583,74 @@ Fig_S5a_top <- ggplot() +
   scale_colour_manual(values = c("#7030a5", "#dabc23", "#b5b8ba"),
                       guide = "none") +
   xlab(expression("Sinking speed (cm s"^-1*")")) +
-  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
+  coord_cartesian(ylim = c(0, 2.2), expand = FALSE, clip = "off") +
   mytheme + # Adjust the title margin to counteract the superscript.
-  theme(axis.title.x = element_text(margin = margin(b = -20)))
+  theme(axis.title.x = element_text(margin = margin(b = -4)),
+        plot.margin = margin(0.5, 1, 0, 0.5, unit = "cm"))
 Fig_S5a_top
 
 require(geomtextpath)
-Fig_S5a_middle <- speed_diff %>% 
-  filter(parameter == "obs") %>%
-  ggplot() +
-  stat_density_ridges(aes(x = diff, y = 0, 
-                          fill = if_else(after_stat(x) < 0,
-                                         "Faeces", "Kelp")), 
-                      geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.32,
-                      from = -16, to = 16, rel_min_height = 0.001,
-                      scale = 1) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.75, vjust = 0,
-                   n = 2^10, bw = 0.32, text_only = TRUE) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.25, vjust = 0,
-                   n = 2^10, bw = 0.32, text_only = TRUE) +
-  geom_vline(xintercept = 0) +
-  annotate("text", x = -16, y = 0, 
-           label = "italic(tilde('y'))['Kelp']*' − '*italic(tilde('y'))['Faeces']",
-           hjust = 0, vjust = -1.6, family = "Futura", size = 3.5,
-           parse = TRUE) +
-  scale_x_continuous(limits = c(-16, 16), oob = scales::oob_keep,
-                     breaks = seq(-16, 16, 8),
-                     labels = scales::label_number(style_negative = "minus")) +
-  scale_fill_manual(values = c(alpha("#7030a5", 0.8), alpha("#dabc23", 0.8)),
-                    guide = "none") +
-  xlab(expression("Δ sinking speed (cm s"^-1*")")) +
-  coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme + # Adjust the title margin to counteract the superscript.
-  theme(axis.title.x = element_text(margin = margin(b = -20)))
-Fig_S5a_middle
+# Fig_S5a_middle <- speed_diff %>% 
+#   filter(parameter == "obs") %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = diff, y = 0, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 0.32,
+#                       from = -16, to = 16, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(aes(x = diff, y = after_stat(density),
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.75, vjust = 0,
+#                    n = 2^10, bw = 0.32, text_only = TRUE) +
+#   geom_textdensity(aes(x = diff, y = after_stat(density),
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.25, vjust = 0,
+#                    n = 2^10, bw = 0.32, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   annotate("text", x = -16, y = 0, 
+#            label = "italic(tilde('y'))['Kelp']*' − '*italic(tilde('y'))['Faeces']",
+#            hjust = 0, vjust = -1.6, family = "Futura", size = 3.5,
+#            parse = TRUE) +
+#   scale_x_continuous(limits = c(-16, 16), oob = scales::oob_keep,
+#                      breaks = seq(-16, 16, 8),
+#                      labels = scales::label_number(style_negative = "minus")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.8), alpha("#dabc23", 0.8)),
+#                     guide = "none") +
+#   xlab(expression("Δ sinking speed (cm s"^-1*")")) +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme + # Adjust the title margin to counteract the superscript.
+#   theme(axis.title.x = element_text(margin = margin(b = -20)))
+# Fig_S5a_middle
 
 Fig_S5a_bottom <- speed_diff %>% 
   filter(parameter == "obs") %>%
   ggplot() +
-  stat_density_ridges(aes(x = logratio, y = 0, 
-                          fill = if_else(after_stat(x) < 0,
-                                         "Faeces", "Kelp")), 
-                      geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.06,
-                      from = -3, to = 3, rel_min_height = 0.001,
-                      scale = 1) +
-  geom_textdensity(aes(x = logratio, y = after_stat(density),
-                       label = label_Kelp),
+  geom_density(aes(x = 10^logratio, fill = after_stat(x) > 1), 
+               colour = NA, n = 2^10, bw = 6 * 0.02, alpha = 0.7) +
+  geom_textdensity(aes(x = 10^logratio, label = label_Kelp),
                    colour = "#dabc23", family = "Futura", 
                    size = 3.5, hjust = 0.24, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
-  geom_textdensity(aes(x = logratio, y = after_stat(density),
-                       label = label_Faeces),
+                   n = 2^10, bw = 6 * 0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = 10^logratio, label = label_Faeces),
                    colour = "#7030a5", family = "Futura", 
                    size = 3.5, hjust = 0.7, vjust = 0,
-                   n = 2^10, bw = 0.06, text_only = TRUE) +
-  geom_vline(xintercept = 0) +
-  annotate("text", x = 3, y = 0, 
-           label = "log[10]*' '*frac(italic(tilde('y'))['Faeces'],italic(tilde('y'))['Kelp'])",
-           hjust = 1, vjust = -0.1, family = "Futura", size = 3.5,
-           parse = TRUE) +
-  scale_x_continuous(limits = c(-3, 3), breaks = seq(-3, 3, by = 1.5),
-                     oob = scales::oob_keep,
-                     labels = scales::label_number(style_negative = "minus",
-                                                   accuracy = c(1, 0.1, 1, 0.1, 1))) +
-  scale_fill_manual(values = c(alpha("#dabc23", 0.8), alpha("#7030a5", 0.8)),
-                    guide = "none") +
+                   n = 2^10, bw = 6 * 0.02, text_only = TRUE) +
+  geom_vline(xintercept = 1) +
+  # annotate("text", x = 3, y = 0, 
+  #          label = "log[10]*' '*frac(italic(tilde('y'))['Faeces'],italic(tilde('y'))['Kelp'])",
+  #          hjust = 1, vjust = -0.1, family = "Futura", size = 3.5,
+  #          parse = TRUE) +
+  scale_x_log10(limits = 10^c(-3, 3), oob = scales::oob_keep,
+                labels = scales::label_log()) +
+  scale_fill_manual(values = c("#dabc23", "#7030a5"), guide = "none") +
   xlab("Relative sinking speed") +
   coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme
+  mytheme + # Adjust the title margin to counteract the superscript.
+  theme(axis.title.x = element_text(margin = margin(t = 0)))
 Fig_S5a_bottom
 
 # 4.3 Distance ####
@@ -713,11 +707,12 @@ distance_diff %>%
   mytheme
 
 # 4.4 Depth ####
+# Re-define theme
 mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
                  panel.grid.minor = element_blank(),
                  panel.border = element_blank(),
-                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 plot.margin = margin(0.5, 1, 0.2, 0.2, unit = "cm"),
                  axis.line = element_line(),
                  axis.title = element_text(size = 12, hjust = 0),
                  axis.text = element_text(size = 10, colour = "black"),
@@ -745,177 +740,161 @@ Fig_S5b <- ggplot() +
     #            size = 0.5, alpha = 0.002, 
     #            shape = 16, width = 0.08) +
     geom_violin(data = depth,
-                aes(Speed, Depth, group = Speed),
+                aes(Speed, Depth/1e3, group = Speed),
                 width = 0.6, fill = NA) +
     geom_line(data = speed2depth_prediction_summary,
-              aes(Speed, mu)) +
+              aes(Speed, Depth/1e3)) + # Convert depth to km
     geom_ribbon(data = speed2depth_prediction_summary,
-                aes(Speed, ymin = Depth.lower, ymax = Depth.upper,
+                aes(Speed, ymin = Depth.lower/1e3, ymax = Depth.upper/1e3,
                     alpha = factor(.width))) +
     geom_density(data = speed_prior_posterior %>%
                    filter(Tissue != "Prior"),
-                 aes(x = obs, y = after_stat(density) * -400, fill = Tissue),
-                 alpha = 0.8, colour = NA, bw = 0.08) +
+                 aes(x = obs, y = after_stat(density) * -0.65, fill = Tissue),
+                 alpha = 0.8, colour = NA, bw = 6 * 0.02, n = 2^10) +
     geom_density(data = depth_posterior,
-                 aes(x = after_stat(density) * -250, y = Depth, fill = Tissue),
-                 alpha = 0.8, colour = NA, bw = 30) +
+                 aes(x = after_stat(density) * -0.35, y = Depth/1e3, fill = Tissue),
+                 alpha = 0.8, colour = NA, bw = 3 * 0.02, n = 2^10) +
     scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
     scale_fill_manual(values = c("#dabc23", "#7030a5"), guide = "none") +
-    scale_x_continuous(position = "top", limits = c(NA, 6), breaks = seq(0, 6, by = 2), 
+    scale_x_continuous(position = "top", limits = c(0, 6), 
+                       breaks = seq(0, 6, by = 2), 
                        oob = scales::oob_keep) +
-    scale_y_reverse(limits = c(3000, NA), breaks = seq(3000, 0, by = -500),
+    scale_y_reverse(limits = c(3, 0),
                     oob = scales::oob_keep) +
     labs(x = expression("Sinking speed (cm s"^-1*")"),
-         y = "Export depth (m)") +
-    coord_cartesian(xlim = c(0, 6), ylim = c(3000, 0),
-                    expand = FALSE, clip = "off") +
-    mytheme +
-    # The central plot controls the top position of all plots so needs to be
-    # tweaked with text margins.
-    theme(axis.title.x.top = element_text(hjust = 1, margin = margin(t = -20)),
-          legend.justification = 1)
-Fig_S5b
+         y = "Export depth (km)") +
+    coord_cartesian(expand = FALSE, clip = "off") +
+    mytheme + # Adjust axis title to dodge density
+    theme(axis.title.x.top = element_text(hjust = 1, margin = margin(t = -4.7)))
 
-mytheme <- theme(panel.background = element_blank(),
-                 panel.grid.major = element_blank(),
-                 panel.grid.minor = element_blank(),
-                 panel.border = element_blank(),
-                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
-                 axis.line = element_line(),
-                 axis.title = element_text(size = 12, hjust = 0),
-                 axis.text = element_text(size = 10, colour = "black"),
-                 axis.ticks.length = unit(.25, "cm"),
-                 axis.ticks = element_line(colour = "black", lineend = "square"),
-                 axis.title.y = element_blank(),
-                 axis.text.y = element_blank(),
-                 axis.ticks.y = element_blank(),
-                 axis.line.y = element_blank(),
-                 legend.key = element_blank(),
-                 legend.key.width = unit(.25, "cm"),
-                 legend.key.height = unit(.45, "cm"),
-                 legend.key.spacing.x = unit(.5, "cm"),
-                 legend.key.spacing.y = unit(.05, "cm"),
-                 legend.background = element_blank(),
-                 legend.position = "top",
-                 legend.justification = 0,
-                 legend.text = element_text(size = 12, hjust = 0),
-                 legend.title = element_blank(),
-                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
-                 strip.background = element_blank(),
-                 strip.text = element_text(size = 12, hjust = 0),
-                 panel.spacing = unit(0.6, "cm"),
-                 text = element_text(family = "Futura"))
+Fig_S5b # Safely ignore warning thrown by geom_violin.
+
+# Re-define theme
+mytheme <- mytheme +
+  theme(plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank())
 
 Fig_S5c_top <- ggplot() +
   stat_density_ridges(data = depth_posterior %>%
                         mutate(Tissue = Tissue %>% fct_relevel("Faeces", "Kelp")),
-                      aes(x = Depth, y = Tissue %>% as.numeric() - 1, fill = Tissue), 
+                      aes(x = Depth, y = Tissue, fill = Tissue), 
                       colour = NA, n = 2^10,
-                      from = 0, to = 1000, rel_min_height = 0.001, 
-                      bandwidth = 10, scale = 3, alpha = 0.8) +
-  scale_x_continuous(limits = c(0, 1000), oob = scales::oob_keep) +
+                      from = -6, to = 6, rel_min_height = 0.001, 
+                      bandwidth = 12 * 0.02, scale = 1.2, alpha = 0.7) +
+  scale_x_log10(limits = 10^c(-6, 6),
+                oob = scales::oob_keep,
+                labels = scales::label_log()) +
   scale_fill_manual(values = c("#7030a5", "#dabc23"),
                     guide = "none") +
   scale_colour_manual(values = c("#7030a5", "#dabc23"),
                       guide = "none") +
   xlab("Export depth (m)") +
-  coord_cartesian(ylim = c(0, 3), expand = FALSE, clip = "off") +
-  mytheme +
-  theme(axis.title.x = element_text(margin = margin(t = 3, b = -20)))
+  coord_cartesian(ylim = c(0, 2.2), expand = FALSE, clip = "off") +
+  mytheme + # Adjust the title margin to counteract the superscript.
+  theme(axis.title.x = element_text(margin = margin(t = 0)),
+        plot.margin = margin(0.5, 0.5, 0, 0.2, unit = "cm"))
+
 Fig_S5c_top
 
-Fig_S5c_middle <- depth_diff %>% 
-  filter(parameter == "obs") %>%
-  ggplot() +
-  stat_density_ridges(aes(x = diff, y = 0, 
-                          fill = if_else(after_stat(x) < 0,
-                                         "Faeces", "Kelp")), 
-                      geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 20,
-                      from = -1000, to = 1000, rel_min_height = 0.001,
-                      scale = 1) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
-                   size = 3.5, hjust = 0.76, vjust = 0,
-                   n = 2^10, bw = 20, text_only = TRUE) +
-  geom_textdensity(aes(x = diff, y = after_stat(density),
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
-                   size = 3.5, hjust = 0.22, vjust = 0,
-                   n = 2^10, bw = 20, text_only = TRUE) +
-  geom_vline(xintercept = 0) +
-  # annotate("text", x = -1000, y = 0.002, 
-  #          label = "italic(tilde('y'))['Kelp']*' − '*italic(tilde('y'))['Faeces']",
-  #          hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
-  #          parse = TRUE) +
-  scale_x_continuous(limits = c(-1000, 1000), oob = scales::oob_keep,
-                     labels = scales::label_number(style_negative = "minus", 
-                                                   big.mark = "")) +
-  scale_fill_manual(values = c(alpha("#7030a5", 0.8), alpha("#dabc23", 0.8)),
-                    guide = "none") +
-  xlab("Δ export depth (m)") +
-  coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme +
-  theme(axis.title.x = element_text(margin = margin(t = 3, b = -20)))
-Fig_S5c_middle
+# Fig_S5c_middle <- depth_diff %>% 
+#   filter(parameter == "obs") %>%
+#   ggplot() +
+#   stat_density_ridges(aes(x = diff, y = 0, 
+#                           fill = if_else(after_stat(x) < 0,
+#                                          "Faeces", "Kelp")), 
+#                       geom = "density_ridges_gradient", n = 2^10,
+#                       colour = NA, linewidth = 0, bandwidth = 20,
+#                       from = -1000, to = 1000, rel_min_height = 0.001,
+#                       scale = 1) +
+#   geom_textdensity(aes(x = diff, y = after_stat(density),
+#                        label = label_Kelp),
+#                    colour = "#dabc23", family = "Futura", 
+#                    size = 3.5, hjust = 0.76, vjust = 0,
+#                    n = 2^10, bw = 20, text_only = TRUE) +
+#   geom_textdensity(aes(x = diff, y = after_stat(density),
+#                        label = label_Faeces),
+#                    colour = "#7030a5", family = "Futura", 
+#                    size = 3.5, hjust = 0.22, vjust = 0,
+#                    n = 2^10, bw = 20, text_only = TRUE) +
+#   geom_vline(xintercept = 0) +
+#   # annotate("text", x = -1000, y = 0.002, 
+#   #          label = "italic(tilde('y'))['Kelp']*' − '*italic(tilde('y'))['Faeces']",
+#   #          hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
+#   #          parse = TRUE) +
+#   scale_x_continuous(limits = c(-1000, 1000), oob = scales::oob_keep,
+#                      labels = scales::label_number(style_negative = "minus", 
+#                                                    big.mark = "")) +
+#   scale_fill_manual(values = c(alpha("#7030a5", 0.8), alpha("#dabc23", 0.8)),
+#                     guide = "none") +
+#   xlab("Δ export depth (m)") +
+#   coord_cartesian(expand = FALSE, clip = "off") +
+#   mytheme +
+#   theme(axis.title.x = element_text(margin = margin(t = 3, b = -20)))
+# Fig_S5c_middle
 
 Fig_S5c_bottom <- depth_diff %>% 
   filter(parameter == "obs") %>%
   ggplot() +
-  stat_density_ridges(aes(x = logratio, y = 0, 
-                          fill = if_else(after_stat(x) < 0,
-                                         "Faeces", "Kelp")), 
-                      geom = "density_ridges_gradient", n = 2^10,
-                      colour = NA, linewidth = 0, bandwidth = 0.2,
-                      from = -10, to = 10, rel_min_height = 0.001,
-                      scale = 1) +
-  geom_textdensity(aes(x = logratio, y = after_stat(density),
-                       label = label_Kelp),
-                   colour = "#dabc23", family = "Futura", 
+  geom_density(aes(x = 10^logratio, fill = after_stat(x) > 1), 
+               colour = NA, n = 2^10, bw = 20 * 0.02, alpha = 0.7) +
+  geom_textdensity(aes(x = 10^logratio, label = label_Kelp),
+                   colour = "#dabc23", family = "Futura",
                    size = 3.5, hjust = 0.38, vjust = 0,
-                   n = 2^10, bw = 0.2, text_only = TRUE) +
-  geom_textdensity(aes(x = logratio, y = after_stat(density),
-                       label = label_Faeces),
-                   colour = "#7030a5", family = "Futura", 
+                   n = 2^10, bw = 20 * 0.02, text_only = TRUE) +
+  geom_textdensity(aes(x = 10^logratio, label = label_Faeces),
+                   colour = "#7030a5", family = "Futura",
                    size = 3.5, hjust = 0.8, vjust = 0,
-                   n = 2^10, bw = 0.2, text_only = TRUE) +
-  geom_vline(xintercept = 0) +
+                   n = 2^10, bw = 20 * 0.02, text_only = TRUE) +
+  geom_vline(xintercept = 1) +
   # annotate("text", x = -10, y = 0.01, 
   #          label = "log[10]*' '*frac(italic(tilde('y'))['Faeces'],italic(tilde('y'))['Kelp'])",
   #          hjust = 0, vjust = -0.2, family = "Futura", size = 3.5,
   #          parse = TRUE) +
-  scale_x_continuous(limits = c(-10, 10), oob = scales::oob_keep,
-                     labels = scales::label_number(style_negative = "minus")) +
-  scale_fill_manual(values = c(alpha("#dabc23", 0.8), alpha("#7030a5", 0.8)),
-                    guide = "none") +
+  scale_x_log10(limits = 10^c(-10, 10), oob = scales::oob_keep,
+                labels = scales::label_log()) +
+  scale_fill_manual(values = c("#dabc23", "#7030a5"), guide = "none") +
   xlab("Relative export depth") +
   coord_cartesian(expand = FALSE, clip = "off") +
-  mytheme
+  mytheme + # Adjust the title margin to counteract the superscript.
+  theme(axis.title.x = element_text(margin = margin(t = 0)))
+
 Fig_S5c_bottom
 
 # 4.5 Figure S5 ####
 require(patchwork)
-layout <- c(
-  area(1, 1), area(2, 1), area(3, 1),
-  area(1, 2, 3, 2),
-  area(1, 3), area(2, 3), area(3, 3)
-)
+# layout <- c(
+#   area(1, 1), area(2, 1), area(3, 1),
+#   area(1, 2, 3, 2),
+#   area(1, 3), area(2, 3), area(3, 3)
+# )
+# 
+# Fig_S5 <- wrap_plots(
+#   Fig_S5a_top, Fig_S5a_middle, Fig_S5a_bottom,
+#   Fig_S5b,
+#   Fig_S5c_top, Fig_S5c_middle, Fig_S5c_bottom,
+#   design = layout
+# ) +
+#   plot_layout(heights = c(1, 0.4, 0.4)) +
+#   plot_annotation(tag_levels = list(c("a", "", "", "b", "c", "", ""))) &
+#   theme(plot.tag = element_text(family = "Futura",
+#                                 size = 15, face = "bold"))
 
-Fig_S5 <- wrap_plots(
-  Fig_S5a_top, Fig_S5a_middle, Fig_S5a_bottom,
-  Fig_S5b,
-  Fig_S5c_top, Fig_S5c_middle, Fig_S5c_bottom,
-  design = layout
-) +
-  plot_layout(heights = c(1, 0.4, 0.4)) +
-  plot_annotation(tag_levels = list(c("a", "", "", "b", "c", "", ""))) &
-  theme(plot.tag = element_text(family = "Futura",
-                                size = 15, face = "bold"))
+Fig_S5 <- ( (Fig_S5a_top / Fig_S5a_bottom) + plot_layout(heights = c(1, 0.5)) | 
+            free(Fig_S5b, side = "t") | 
+            (Fig_S5c_top / Fig_S5c_bottom) + plot_layout(heights = c(1, 0.5)) ) +
+  plot_annotation(tag_levels = list(c("a", "", "b", "c", ""))) &
+  theme(plot.tag = element_text(family = "Futura", size = 15, face = "bold",
+                                margin = margin(t = -18)),
+        plot.tag.position = c(0.015, 1))
+        
+Fig_S5
 
 Fig_S5 %>%
   ggsave(filename = "Fig_S5.pdf", path = "Figures",
-         device = cairo_pdf, height = 14, width = 21, 
+         device = cairo_pdf, height = 10, width = 20, 
          units = "cm")
 
 # 5. Save relevant data ####
@@ -925,6 +904,8 @@ speed_prior_posterior %>%
   write_rds(here("Sinking", "RDS", "speed_prior_posterior.rds"))
 speed_diff %>% 
   write_rds(here("Sinking", "RDS", "speed_diff.rds"))
+speed2depth_prediction_summary %>%
+  write_rds(here("Sinking", "RDS", "speed2depth_prediction_summary.rds"))
 depth_posterior %>% 
   write_rds(here("Sinking", "RDS", "depth_posterior.rds"))
 depth_diff %>% 
