@@ -893,12 +893,8 @@ defecation_diff %<>%
            signif(digits = 2) %>% 
            str_c("%"))
 
-
-# 5. Food conversion model ####
-# 6. Relative consumption model ####
-# 7. Relative growth model ####
-
 # 8. Visualisation ####
+# 8.1 Figure 1a ####
 # Define custom theme
 mytheme <- theme(panel.background = element_blank(),
                  panel.grid.major = element_blank(),
@@ -922,8 +918,8 @@ mytheme <- theme(panel.background = element_blank(),
                  legend.title = element_blank(),
                  legend.margin = margin(0, 0, 0, 0, unit = "cm"),
                  strip.background = element_blank(),
-                 strip.text = element_text(size = 12, hjust = 0),
-                 panel.spacing = unit(0.6, "cm"),
+                 strip.text = element_text(size = 12, hjust = 0, face = "bold"),
+                 panel.spacing = unit(1, "cm"),
                  text = element_text(family = "Futura"))
 
 require(geomtextpath)
@@ -1002,6 +998,122 @@ Fig_1a_right <- ggplot() +
         axis.ticks.y = element_blank(),
         axis.line.y = element_blank())
 Fig_1a_right
+
+# 8.2 Figure S1 ####
+# Summarise
+require(glue)
+urchins %>%
+  summarise(
+    across(
+      c(Initial, Diameter),
+      list(
+        mean = mean,
+        sd = sd
+      )
+    ),
+    n = n(),
+    .by = Season
+  ) %>%
+  mutate(
+    across(
+      c(ends_with("mean"), ends_with("sd")),
+      ~ .x %>% signif(2)
+    ),
+    Mass = glue("{Initial_mean} ± {Initial_sd}"),
+    Diameter = glue("{Diameter_mean} ± {Diameter_sd}")
+  ) %>%
+  select(Season, Mass, Diameter, n)
+# Season Mass     Diameter     n
+# Autumn 38 ± 14  45 ± 6.2    75
+# Spring 55 ± 7.6 52 ± 3.6    75
+# Summer 54 ± 12  51 ± 4.4    75
+
+urchins %>%
+  drop_na(Growth) %>%
+  summarise(
+    mean = mean(Growth),
+    sd = sd(Growth),
+    n = n(),
+    .by = Season
+  ) %>%
+  mutate(
+    across(
+      c(mean, sd),
+      ~ .x %>% signif(2)
+    ),
+    Growth = glue("{mean} ± {sd}")
+  ) %>%
+  select(Season, Growth, n)
+# Season Growth            n
+# Autumn 0.31 ± 0.26      75
+# Spring -0.011 ± 0.33    75
+# Summer 0.021 ± 0.14     68
+
+# Plot
+Fig_S1a <- urchins %>%
+  mutate(Season = Season %>% fct_relevel("Spring", "Summer")) %>%
+  ggplot() +
+    geom_point(aes(Diameter, Initial), shape = 16, size = 2.5, 
+               colour = "#7030a5", alpha = 0.4) +
+    geom_rug(data = . %>% 
+               summarise(
+                 Initial = mean(Initial),
+                 Diameter = mean(Diameter),
+                 .by = Season
+               ),
+             aes(Diameter, Initial), colour = "#7030a5",
+             length = unit(.25, "cm"), lineend = "square") +
+    facet_grid(~ Season) +
+    scale_y_continuous(breaks = seq(10, 90, 20)) +
+    labs(x = "Test diameter (mm)", y = "Mass (g)") +
+    coord_cartesian(xlim = c(30, 70), ylim = c(10, 90),
+                    expand = F, clip = "off") +
+    mytheme
+
+Fig_S1a
+
+Fig_S1b <- urchins %>%
+  mutate(Season = Season %>% fct_relevel("Spring", "Summer")) %>%
+  drop_na(Growth) %>% # Some urchins died and couldn't be re-measured
+  ggplot() +
+    # geom_hline(yintercept = 0) +
+    geom_point(aes(Diameter, Growth), shape = 16, size = 2.5, 
+               colour = "#7030a5", alpha = 0.4) +
+    # geom_text(aes(Diameter, Growth, label = Notes),
+    #           na.rm = TRUE, hjust = 0.1, vjust = 1.5) +
+    geom_rug(data = . %>% 
+               summarise(
+                 Growth = mean(Growth),
+                 Diameter = mean(Diameter),
+                 .by = Season
+               ),
+             aes(Diameter, Growth), colour = "#7030a5",
+             length = unit(.25, "cm"), lineend = "square") +
+    facet_grid(~ Season) +
+    scale_y_continuous(breaks = seq(-1.4, 1.4, 0.7),
+                       labels = scales::label_number(
+                         accuracy = c(rep(0.1, 2), 1, rep(0.1, 2)),
+                         style_negative = "minus"
+                       )) +
+    labs(x = "Test diameter (mm)", y = expression("Growth (% d"^-1*")")) +
+    coord_cartesian(xlim = c(30, 70), ylim = c(-1.4, 1.4),
+                    expand = F, clip = "off") +
+    mytheme
+
+Fig_S1b
+
+require(patchwork)
+Fig_S1 <- ( Fig_S1a + 
+              theme(plot.margin = margin(0, 0.5, 1, 0.2, unit = "cm"),
+                    axis.title.x = element_blank(),
+                    axis.text.x = element_blank()) )  / 
+          ( Fig_S1b + 
+              theme(plot.margin = margin(0, 0.5, 0.2, 0.2, unit = "cm"),
+                    strip.text = element_blank()) )
+Fig_S1 %>%
+  ggsave(filename = "Fig_S1.pdf", path = "Figures",
+         device = cairo_pdf, height = 13, width = 20, 
+         units = "cm")
 
 # 9. Save relevant data ####
 grazing %>%
