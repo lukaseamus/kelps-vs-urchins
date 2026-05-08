@@ -600,7 +600,8 @@ pathlength %>%
 pathlength %>%
   group_by(Pipetting) %>%
   summarise(Pathlength_mean = mean(Pathlength),
-            Pathlength_sd = sd(Pathlength))
+            Pathlength_sd = sd(Pathlength),
+            n = n())
 # Again the difference in sd is only 0.00069 cm, but the mean
 # estimate for manual pipetting is lower.
 
