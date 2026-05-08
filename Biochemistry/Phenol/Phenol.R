@@ -239,7 +239,7 @@ phenol %<>%
 
 # 2.6 Prior-posterior comparison ####
 # 2.6.1 Sample priors ####
-require(truncnorm) # R doesn't have a native turncated normal.
+require(truncnorm) # R doesn't have a native truncated normal.
 phenol %<>%
   mutate(
     Technical_Prior = Absorbance_mean %>%
