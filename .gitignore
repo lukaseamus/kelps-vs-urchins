@@ -62,5 +62,9 @@ rsconnect/
 # RDS files
 *.rds
 
+# Sequence files
+*.fa.gz
+*.fastq.gz
+
 # Keynote presentation
 *.key
