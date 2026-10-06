@@ -58,3 +58,6 @@ rsconnect/
 # Temporary Microsoft files
 ~*.docx
 ~*.xlsx
+
+# RDS files
+*.rds
