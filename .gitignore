@@ -61,3 +61,6 @@ rsconnect/
 
 # RDS files
 *.rds
+
+# Keynote presentation
+*.key
