@@ -177,7 +177,7 @@ require(ggtext) # Needed to use Markdown syntax in gif
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "speed.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "speed.gif", path = here("Figures", "Animation"))
 
 # 1.9 Matching static plot of difference ####
 require(ggridges)
@@ -212,7 +212,7 @@ require(geomtextpath)
   coord_cartesian(expand = FALSE, clip = "off") +
   mytheme +
   theme(axis.title = element_markdown()) ) %>%
-  ggsave(filename = "speed.png", path = here("Figures", "Animations"),
+  ggsave(filename = "speed.png", path = here("Figures", "Animation"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
@@ -338,7 +338,7 @@ distance_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "distance.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "distance.gif", path = here("Figures", "Animation"))
 
 # 2.9 Matching static plot of difference ####
 ( distance_diff %>% 
@@ -370,7 +370,7 @@ distance_dens_ani <- bind_rows(
       xlab("Δ export distance (km)") +
       coord_cartesian(expand = FALSE, clip = "off") +
       mytheme ) %>%
-  ggsave(filename = "distance.png", path = here("Figures", "Animations"),
+  ggsave(filename = "distance.png", path = here("Figures", "Animation"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
@@ -499,7 +499,7 @@ carbon_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "carbon.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "carbon.gif", path = here("Figures", "Animation"))
 
 # 3.9 Matching static plot of difference ####
 ( carbon_diff %>% 
@@ -531,7 +531,7 @@ carbon_dens_ani <- bind_rows(
     xlab("Δ carbon content (%)") +
     coord_cartesian(expand = FALSE, clip = "off") +
     mytheme ) %>%
-  ggsave(filename = "carbon.png", path = here("Figures", "Animations"),
+  ggsave(filename = "carbon.png", path = here("Figures", "Animation"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
@@ -544,12 +544,12 @@ phenol_prior_posterior <-
 phenol_diff <- 
   read_rds(here("Biochemistry", "Phenol", "RDS", "phenol_diff.rds"))
 
-# 4.2 Add animation aesthetics to data points ####
+# 4.2 Add animation aesthetics to data points and text ####
 phenol %<>%
   select(Treatment, Individual, Samples_Data_Summary) %>%
   unnest(cols = Samples_Data_Summary) %>%
   mutate(y = -0.5 + runif( n() , -0.36 , 0.36 ), # Manual jitter
-         alpha = 0.4, # Baseline transparency
+         alpha = 0.5, # Baseline transparency
          colour = if_else( # Colours
            Treatment == "Kelp",
            "#dabc23", "#7030a5"
@@ -558,11 +558,31 @@ phenol %<>%
   select(-Concentration_sd) %T>%
   print()
 
+phenol_text <- phenol_prior_posterior %>%
+  distinct(Treatment) %>%
+  mutate(
+    label = Treatment %>% as.character(),
+    colour = case_when(
+      Treatment == "Kelp" ~ "#dabc23", 
+      Treatment == "Faeces" ~ "#7030a5",
+      Treatment == "Prior" ~ "#b5b8ba"
+    ),
+    x = 2, y = 2
+  ) %T>%
+  print()
+
 # 4.3 Build density polygons ####
 phenol_dens <- phenol_prior_posterior %>%
-  group_by(Treatment) %>% # No reasonable joint bandwidth.
-  reframe(x = c(0, density(obs_new, n = 2^10, from = 0, to = 2)$x, 2),
-          y = c(0, density(obs_new, n = 2^10, from = 0, to = 2)$y, 0)) %>%
+  mutate(
+    bw = if_else( # No reasonable joint bandwidth.
+      Treatment == "Faeces", .2 * .02, 2 * .02
+    )
+  ) %>%
+  group_by(Treatment) %>% 
+  reframe(
+    x = c(0, density(obs_new, n = 2^10, from = 0, to = 2, bw = first(bw))$x, 2),
+    y = c(0, density(obs_new, n = 2^10, from = 0, to = 2, bw = first(bw))$y, 0)
+  ) %>%
   group_by(Treatment) %>%
   mutate(y = y * 0.6 / ( sum(y) * ( x[3] - x[2] ) )) %>%
   ungroup() %T>%
@@ -585,6 +605,12 @@ ggplot() +
              shape = 16, size = 2.5) +
   geom_polygon(data = phenol_dens,
                aes(x = x, y = y, fill = fill)) +
+  geom_text(
+    data = phenol_text,
+    aes(x, y, label = label, colour = colour),
+    hjust = 1, vjust = 1, size.unit = "pt",
+    size = 12, family = "Futura"
+  ) +
   scale_colour_identity() +
   scale_alpha_identity() +
   scale_fill_identity() +
@@ -640,7 +666,26 @@ phenol_dens_ani <- bind_rows(
 ) %T>%
   print()
 
-# 4.8 Dynamic plot ####
+# 4.8 Tween text ####
+phenol_text_ani <- bind_rows(
+  tween_state(phenol_text %>% filter(Treatment == "Prior"), 
+              phenol_text %>% filter(Treatment == "Kelp"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_state(phenol_text %>% filter(Treatment == "Kelp"),
+              phenol_text %>% filter(Treatment == "Faeces"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_state(phenol_text %>% filter(Treatment == "Faeces"),
+              phenol_text %>% filter(Treatment == "Prior"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300) 
+) %T>%
+  print()
+
+# 4.9 Dynamic plot ####
 ( ggplot() +
     geom_point(data = phenol_ani,
                aes(x = x, y = y, colour = colour, alpha = alpha),
@@ -664,9 +709,36 @@ phenol_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "phenol.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "phenol.gif", path = here("Figures", "Animation"))
 
-# 4.9 Matching static plot of difference ####
+# New version
+( ggplot() +
+    geom_point(data = phenol_ani,
+               aes(x = x, y = y, colour = colour, alpha = alpha),
+               shape = 16, size = 2.35) +
+    geom_polygon(data = phenol_dens_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    geom_text(
+      data = phenol_text_ani,
+      aes(x, y, label = label, colour = colour),
+      hjust = 1, vjust = 1, size.unit = "pt",
+      size = 12, family = "Futura"
+    ) +
+    scale_colour_identity() +
+    scale_alpha_identity() +
+    scale_fill_identity() +
+    scale_x_continuous(labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1))) +
+    coord_cartesian(xlim = c(0, 2), ylim = c(-1, 2), 
+                    expand = FALSE, clip = "off") +
+    xlab("Phenolic content (%)") +
+    transition_manual(.frame) +
+    mytheme ) %>%
+  animate(fps = 25, duration = 3 * 3, width = 20, height = 5,
+          units = "cm", res = 300, renderer = gifski_renderer(), 
+          device = "ragg_png") %>%
+  anim_save(filename = "phenol.gif", path = here("Figures", "Animation"))
+
+# 4.10 Matching static plot of difference ####
 ( phenol_diff %>% 
     filter(parameter == "obs_new") %>%
     ggplot() +
@@ -696,7 +768,7 @@ phenol_dens_ani <- bind_rows(
     xlab("Δ phenolic content (%)") +
     coord_cartesian(expand = FALSE, clip = "off") +
     mytheme ) %>%
-  ggsave(filename = "phenol.png", path = here("Figures", "Animations"),
+  ggsave(filename = "phenol.png", path = here("Figures", "Animation"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
@@ -709,18 +781,31 @@ chlorophyll_prior_posterior <-
 chlorophyll_diff <- 
   read_rds(here("Biochemistry", "Pigments", "RDS", "chlvspheo_diff.rds"))
 
-# 5.2 Add animation aesthetics to data points ####
+# 5.2 Add animation aesthetics to data points and text ####
 chlorophyll %<>%
   select(Treatment, Individual, Samples_Data_Summary) %>%
   unnest(cols = Samples_Data_Summary) %>% # Calculate percentage of intact chlorophyll
   mutate(x = Chlorophyll_mean / (Chlorophyll_mean + Pheopigments_mean) * 100) %>%
   mutate(y = -0.5 + runif( n() , -0.36 , 0.36 ), # Manual jitter
-         alpha = 0.4, # Baseline transparency
+         alpha = 0.5, # Baseline transparency
          colour = if_else( # Colours
            Treatment == "Kelp",
            "#dabc23", "#7030a5"
          )) %>%
   select(Treatment, Individual, x, y, alpha, colour) %T>%
+  print()
+
+chlorophyll_text <- chlorophyll_prior_posterior %>%
+  distinct(Treatment) %>%
+  mutate(
+    label = Treatment %>% as.character(),
+    colour = case_when(
+      Treatment == "Kelp" ~ "#dabc23", 
+      Treatment == "Faeces" ~ "#7030a5",
+      Treatment == "Prior" ~ "#b5b8ba"
+    ),
+    x = 0, y = 2
+  ) %T>%
   print()
 
 # 5.3 Build density polygons ####
@@ -747,9 +832,15 @@ chlorophyll_dens %<>%
 ggplot() +
   geom_point(data = chlorophyll,
              aes(x = x, y = y, colour = colour, alpha = alpha),
-             shape = 16, size = 2.5) +
+             shape = 16, size = 2.35) +
   geom_polygon(data = chlorophyll_dens,
                aes(x = x, y = y, fill = fill)) +
+  geom_text(
+    data = chlorophyll_text,
+    aes(x, y, label = label, colour = colour),
+    hjust = 0, vjust = 1, size.unit = "pt",
+    size = 12, family = "Futura"
+  ) +
   scale_colour_identity() +
   scale_alpha_identity() +
   scale_fill_identity() +
@@ -803,7 +894,26 @@ chlorophyll_dens_ani <- bind_rows(
 ) %T>%
   print()
 
-# 5.8 Dynamic plot ####
+# 5.8 Tween text ####
+chlorophyll_text_ani <- bind_rows(
+  tween_state(chlorophyll_text %>% filter(Treatment == "Prior"), 
+              chlorophyll_text %>% filter(Treatment == "Kelp"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_state(chlorophyll_text %>% filter(Treatment == "Kelp"),
+              chlorophyll_text %>% filter(Treatment == "Faeces"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_state(chlorophyll_text %>% filter(Treatment == "Faeces"),
+              chlorophyll_text %>% filter(Treatment == "Prior"),
+              ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300) 
+) %T>%
+  print()
+
+# 5.9 Dynamic plot ####
 ( ggplot() +
     geom_point(data = chlorophyll_ani,
                aes(x = x, y = y, colour = colour, alpha = alpha),
@@ -828,9 +938,35 @@ chlorophyll_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 10, # 10 s, so 45 fps
           width = 21, height = 10 * 2/3,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "chlorophyll.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "chlorophyll.gif", path = here("Figures", "Animation"))
 
-# 5.9 Matching static plot of difference ####
+# New version
+( ggplot() +
+    geom_point(data = chlorophyll_ani,
+               aes(x = x, y = y, colour = colour, alpha = alpha),
+               shape = 16, size = 2.35) +
+    geom_polygon(data = chlorophyll_dens_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    # geom_text(
+    #   data = chlorophyll_text_ani,
+    #   aes(x, y, label = label, colour = colour),
+    #   hjust = 0, vjust = 1, size.unit = "pt",
+    #   size = 12, family = "Futura"
+    # ) +
+    scale_colour_identity() +
+    scale_alpha_identity() +
+    scale_fill_identity() +
+    coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
+                    expand = FALSE, clip = "off") +
+    xlab("Functional chlorophyll *a* (%)") +
+    transition_manual(.frame) +
+    mytheme +
+    theme(axis.title.x = element_markdown()) ) %>%
+  animate(fps = 25, duration = 3 * 3, width = 20, height = 5, units = "cm", 
+          res = 300, renderer = gifski_renderer(), device = "ragg_png") %>%
+  anim_save(filename = "chlorophyll.gif", path = here("Figures", "Animation"))
+
+# 5.10 Matching static plot of difference ####
 ( chlorophyll_diff %>% 
     filter(parameter == "obs_new") %>%
     ggplot() +
@@ -862,7 +998,7 @@ chlorophyll_dens_ani <- bind_rows(
     coord_cartesian(expand = FALSE, clip = "off") +
     mytheme +
     theme(axis.title = element_markdown()) ) %>%
-  ggsave(filename = "chlorophyll.png", path = here("Figures", "Animations"),
+  ggsave(filename = "chlorophyll.png", path = here("Figures", "Animation"),
          width = 21, height = 10 * 1/3, units = "cm", dpi = 500)
 
 
@@ -1248,7 +1384,7 @@ defecation_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 15,
           width = 21 * 1/2, height = 10,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "grazing_left.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "grazing_left.gif", path = here("Figures", "Animation"))
 
 ( ggplot() +
     geom_point(data = grazing_jitter_ani,
@@ -1271,7 +1407,7 @@ defecation_dens_ani <- bind_rows(
   animate(nframes = 450, duration = 15,
           width = 21 * 1/2, height = 10,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "grazing_right.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "grazing_right.gif", path = here("Figures", "Animation"))
 
 # # Adjust theme for higher resolution plotting.
 # theme(axis.title = element_markdown(size = 12 * 4),
